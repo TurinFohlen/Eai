@@ -1,0 +1,11 @@
+# Elixir build artifacts
+_build/
+deps/
+doc/
+
+# Mix
+*.ez
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,5 +1,6 @@
 defmodule Eai.Chat do
   alias Eai.LLM.Direct
+  alias Eai.Utils    # ← 诉求一：用户输入进入消息队列前清洗
 
   # ── 交互式循环（保留） ──────────────────────────────────────────────
 
@@ -20,12 +21,16 @@ defmodule Eai.Chat do
       "" ->
         loop(messages)
       _ ->
-        new_messages = messages ++ [%{role: "user", content: buffer}]
+        # 诉求一：用户输入是数据入口，清洗后再加入消息队列
+        user_msg = %{role: "user", content: Utils.sanitize_value(buffer)}
+        new_messages = messages ++ [user_msg]
         case Direct.run(new_messages) do
           {:ok, response} ->
+            Phoenix.PubSub.broadcast(Eai.PubSub, "chat_updates", {:new_message, new_messages})
             IO.puts("\n🤖 #{response}\n")
             loop(new_messages ++ [%{role: "assistant", content: response}])
           {:error, error} ->
+            Phoenix.PubSub.broadcast(Eai.PubSub, "chat_updates", {:error, error})
             IO.puts("\n⚠️ Error: #{inspect(error)}\n")
             loop(messages)
         end
@@ -33,18 +38,14 @@ defmodule Eai.Chat do
   end
 
   defp read_until_send do
-    lines = []
-    read_lines(lines)
+    read_lines([])
   end
 
   defp read_lines(lines) do
     case IO.gets("") |> String.trim_trailing() do
-      "/send" ->
-        Enum.join(Enum.reverse(lines), "\n")
-      "exit" ->
-        "exit"
-      line ->
-        read_lines([line | lines])
+      "/send" -> Enum.join(Enum.reverse(lines), "\n")
+      "exit"  -> "exit"
+      line    -> read_lines([line | lines])
     end
   end
 
@@ -65,7 +66,8 @@ defmodule Eai.Chat do
   与 `Direct.run/2` 保持一致，方便模式匹配。
   """
   def send(message, agent_id \\ "default") do
-    messages = [%{role: "user", content: message}]
+    # 诉求一：外部调用入口，同样清洗
+    messages = [%{role: "user", content: Utils.sanitize_value(message)}]
     Direct.run(messages, agent_id)
   end
 end
