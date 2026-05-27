@@ -4,7 +4,7 @@ defmodule Eai.MixProject do
   def project do
     [
       app: :eai,
-      version: "0.1.3",
+      version: "0.1.5",
       elixir: "~> 1.19",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -48,7 +48,14 @@ defmodule Eai.MixProject do
     [
       name: :eai,
       description: "Extreme minimal AI assistant with persistent PTY and recursive sub-agents",
-      files: ["lib", "priv", "mix.exs", "README.md", "LICENSE"],
+      files: ["lib", "priv", "mix.exs", "README.md", "LICENSE"],files: [
+      "lib",
+      "priv",
+      "config/**/*",        
+      "mix.exs",
+      "README.md",
+      "LICENSE"
+    ],
       licenses: ["Apache-2.0"],
       links: %{"GitHub" => "https://github.com/TurinFohlen/eai"}
     ]

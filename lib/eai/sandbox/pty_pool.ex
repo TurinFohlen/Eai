@@ -5,6 +5,9 @@ defmodule Eai.Sandbox.PTYPool do
   require Logger
   alias Eai.ResultCollector
 
+  # ── 配置读取 ───────────────────────────────────────────────────────────────
+  defp sandbox_cfg(key), do: Application.fetch_env!(:eai, :sandbox) |> Keyword.fetch!(key)
+
   # ── 公开 API ──────────────────────────────────────────────────────────────
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -14,7 +17,8 @@ defmodule Eai.Sandbox.PTYPool do
     GenServer.call(__MODULE__, {:exec, agent_id, task_id, cmd})
   end
 
-  def exec_sync(agent_id, cmd, timeout_ms \\ 30_000) do
+  def exec_sync(agent_id, cmd, timeout_ms \\ nil) do
+    timeout_ms = timeout_ms || sandbox_cfg(:exec_sync_timeout)
     task_id = "task_#{System.unique_integer([:positive, :monotonic])}"
     case exec_async(agent_id, cmd, task_id) do
       {:ok, ^task_id} -> wait_for_result(task_id, timeout_ms, agent_id)
@@ -58,12 +62,11 @@ defmodule Eai.Sandbox.PTYPool do
         %{system_time: System.system_time()},
         %{agent_id: agent_id, task_id: task_id}
       )
-      # 【核心改动】：卸下 stty 结界，任由 PTY 产生双倍镜像
+
       line = "echo #{ResultCollector.sentinel_left()}; #{cmd}; echo #{ResultCollector.sentinel_right()}\n"
-      
+
       Logger.debug("PTYPool exec: agent=#{agent_id} task=#{task_id}")
       ExPTY.write(pty, line)
-
 
       {:reply, {:ok, task_id}, sessions}
     end
@@ -168,7 +171,7 @@ defmodule Eai.Sandbox.PTYPool do
     else
       case ResultCollector.get(task_id) do
         %{status: "complete", output: output} -> {:ok, output}
-        _ -> 
+        _ ->
           Process.sleep(50)
           do_wait(task_id, deadline, agent_id)
       end
@@ -178,14 +181,18 @@ defmodule Eai.Sandbox.PTYPool do
   defp get_or_create(agent_id, sessions) do
     case Map.get(sessions, agent_id) do
       nil ->
-        pool_pid = self()
-        work_dir = "/home/eai_agents/#{agent_id}"
+        pool_pid  = self()
+        work_root = sandbox_cfg(:work_dir_root)
+        work_dir  = "#{work_root}/#{agent_id}"
         File.mkdir_p!(work_dir)
+
         shell = System.find_executable("bash") || "/bin/sh"
+        cols  = sandbox_cfg(:pty_cols)
+        rows  = sandbox_cfg(:pty_rows)
 
         {:ok, pty} = ExPTY.spawn(shell, [],
           name: "xterm-256color",
-          cols: 200, rows: 50,
+          cols: cols, rows: rows,
           cwd: work_dir,
           on_data: fn _pty, _pid, data ->
             send(pool_pid, {:pty_data, agent_id, data})
@@ -194,18 +201,17 @@ defmodule Eai.Sandbox.PTYPool do
             GenServer.cast(pool_pid, {:remove, agent_id})
           end
         )
-	# 💡 [开光修补]：给新生的 Bash 会话一点呼吸和安顿的时间
-	  Process.sleep(200)
-	  
-	  # 💡 冲洗邮箱，把 Bash 刚启动时吐出的 "root@localhost..." 提示符和 \e[?2004h 噪声吃掉
-	  flush_init_noise = fn fun ->
-	    receive do
-	      {:pty_data, ^agent_id, _data} -> fun.(fun)
-	    after 50 -> :ok
-	    end
-	  end
-	  flush_init_noise.(flush_init_noise)
 
+        Process.sleep(sandbox_cfg(:pty_init_sleep_ms))
+
+        # 冲洗 Bash 启动时的初始化噪声（提示符、转义序列等）
+        flush_init_noise = fn fun ->
+          receive do
+            {:pty_data, ^agent_id, _data} -> fun.(fun)
+          after 50 -> :ok
+          end
+        end
+        flush_init_noise.(flush_init_noise)
 
         :telemetry.execute(
           [:eai, :session, :spawn],
@@ -214,7 +220,7 @@ defmodule Eai.Sandbox.PTYPool do
         )
         Logger.info("PTYPool: spawned #{agent_id} pid=#{inspect(pty)}")
 
-        Process.sleep(300)
+        Process.sleep(sandbox_cfg(:pty_ready_sleep_ms))
         session = %{pty: pty, task_id: nil, task_started_at: nil}
         {pty, Map.put(sessions, agent_id, session)}
 
