@@ -70,6 +70,51 @@ defmodule Eai.ResultCollector do
     end
   end
 
+
+  @doc """
+  超时时强制取出 buffer 中已有的全部数据，尽力提取有效内容后标记完成。
+  - 已有完整 sentinel 对 → 精准提取
+  - 只有第二个 START → 返回 START 之后的所有内容
+  - 什么都没有 → 返回原始 buffer（trim 后）
+  """
+  def force_complete(task_id) do
+    buf_key = "result:#{task_id}:buffer"
+    res_key = "result:#{task_id}"
+
+    buffer = Cache.get(buf_key) || ""
+    current = Cache.get(res_key)
+
+    if current && current.status == "complete" do
+      {:ok, current.output}
+    else
+      output =
+        case {find_nth(buffer, @left, 2), find_nth(buffer, @right, 2)} do
+          {{start_pos, start_len}, {end_pos, _end_len}} ->
+            core_start = start_pos + start_len
+            core_len = max(end_pos - core_start, 0)
+            buffer |> :binary.part(core_start, core_len) |> String.trim()
+
+          _ ->
+            # 没有完整 sentinel → 取第二个 START 之后的全部，或整段 buffer
+            case find_nth(buffer, @left, 2) do
+              {start_pos, start_len} ->
+                buffer
+                |> :binary.part(start_pos + start_len, byte_size(buffer) - start_pos - start_len)
+                |> String.trim()
+
+              nil ->
+                buffer |> String.trim()
+            end
+        end
+
+      Cache.put(res_key, %{output: output, status: "complete"})
+      Cache.delete(buf_key)
+      Logger.info("ResultCollector force_complete: #{task_id} #{byte_size(output)}b")
+      {:ok, output}
+    end
+  end
+
+
   # ── 修正后的 find_nth：正确地按 offset 递进 ──────────────────────
 
   defp find_nth(subject, pattern, nth) do

@@ -167,7 +167,11 @@ defmodule Eai.Sandbox.PTYPool do
         %{system_time: System.system_time()},
         %{agent_id: agent_id, task_id: task_id}
       )
-      {:error, :timeout}
+      Logger.warning("PTYPool timeout: agent=#{agent_id} task=#{task_id}, force-completing")
+      case ResultCollector.force_complete(task_id) do
+        {:ok, output} -> {:ok, output}
+        _ -> {:error, :timeout}
+      end
     else
       case ResultCollector.get(task_id) do
         %{status: "complete", output: output} -> {:ok, output}
