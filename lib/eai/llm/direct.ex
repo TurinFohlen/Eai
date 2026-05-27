@@ -54,6 +54,17 @@ defmodule Eai.LLM.Direct do
         name: "list_sessions",
         description: "List all active PTY sessions with their status and current task.",
         parameters: %{type: "object", properties: %{}, required: []}
+    }},
+    %{type: "function", function: %{
+        name: "call_subagent",
+        description: "Ask another independent AI agent to solve a sub-task. Returns its final answer. Do not use recursively.",
+        parameters: %{type: "object",
+        properties: %{
+        message: %{type: "string", description: "The task or question for the sub-agent."},
+        agent_id: %{type: "string", description: "Optional session ID for the sub-agent. Defaults to 'subagent'."}
+      },
+      required: ["message"]
+        }
     }}
   ]
 
@@ -198,7 +209,19 @@ defmodule Eai.LLM.Direct do
     |> Utils.sanitize_value()
     |> Jason.encode!()
   end
-
+  defp execute_tool("call_subagent", args, _parent_agent_id) do
+     message = Map.get(args, "message", "")
+     agent_id = Map.get(args, "agent_id", "subagent_#{System.unique_integer([:positive])}")
+  
+     case Eai.Chat.send(message, agent_id) do
+        {:ok, response} -> 
+        %{status: "success", answer: response, sub_agent_id: agent_id}
+        |> Utils.sanitize_value() |> Jason.encode!()
+        {:error, reason} ->
+        %{status: "error", reason: inspect(reason)}
+        |> Utils.sanitize_value() |> Jason.encode!()
+     end
+  end
   defp execute_tool(name, _args, _agent_id) do
     Jason.encode!(%{error: "unknown tool: #{name}"})
   end

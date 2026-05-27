@@ -19,6 +19,7 @@ defmodule Eai.ResultCollector do
   end
 
   def collect(task_id, data) do
+    data = Eai.Utils.sanitize_value(data)   # ← 先清洗，确保后续操作安全
     buf_key = "result:#{task_id}:buffer"
     res_key = "result:#{task_id}"
 
