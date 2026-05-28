@@ -68,6 +68,37 @@ defmodule Eai.LLM.Direct do
           },
           required: ["message"]
         }
+    }},
+    %{type: "function", function: %{
+        name: "write_to_session",
+        description: """
+        Write raw bytes directly to a PTY session's stdin, bypassing the sentinel wrapper.
+        Use ONLY when the session is waiting for interactive input (e.g. after seeing [Y/n], Password:, etc.).
+        Do NOT use for normal script execution — use execute_script for that.
+        """,
+        parameters: %{type: "object",
+          properties: %{
+            input:    %{type: "string", description: "The exact string to write to the PTY (e.g. \"y\\n\", \"no\\n\", \"mypassword\\n\")."},
+            agent_id: %{type: "string", description: "PTY session ID (default: 'default')."}
+          },
+          required: ["input"]
+        }
+    }},
+    %{type: "function", function: %{
+        name: "force_complete_task",
+        description: """
+        Force-collect whatever output a task has produced so far and mark it complete.
+        Use when a task is stuck or taking too long and you want to retrieve partial output
+        without sending Ctrl+C. The task_id must be the one returned by execute_script.
+        After calling this, the session is unlocked and ready for the next execute_script.
+        """,
+        parameters: %{type: "object",
+          properties: %{
+            task_id:  %{type: "string", description: "The task_id to force-complete."},
+            agent_id: %{type: "string", description: "PTY session ID (default: 'default')."}
+          },
+          required: ["task_id"]
+        }
     }}
   ]
 
@@ -107,18 +138,28 @@ defmodule Eai.LLM.Direct do
 
       {:ok, %{status: status, body: body}} ->
         :telemetry.execute([:eai, :llm, :request, :stop], %{duration_ms: duration}, %{agent_id: agent_id, status: :error})
+        :telemetry.execute([:eai, :llm, :request, :error], %{duration_ms: duration}, %{agent_id: agent_id, reason: "HTTP #{status}", body: inspect(body)})
         {:error, "HTTP #{status}: #{inspect(body)}"}
 
       {:error, reason} ->
         :telemetry.execute([:eai, :llm, :request, :stop], %{duration_ms: duration}, %{agent_id: agent_id, status: :error})
+        :telemetry.execute([:eai, :llm, :request, :error], %{duration_ms: duration}, %{agent_id: agent_id, reason: inspect(reason)})
         {:error, reason}
     end
   end
 
-  # assistant 消息：reasoning_content 原样回传（空也要传，有语义）
+  # ── 消息格式化（全部使用 string keys，确保 DeepSeek 不报错） ──
   defp format_message(%{role: "assistant"} = msg) do
-    base = Map.take(msg, [:role, :content, :tool_calls, :reasoning_content])
-    Enum.reject(base, fn {_, v} -> is_nil(v) end) |> Map.new()
+    base = %{
+      "role" => "assistant",
+      "content" => msg["content"] || "",
+      "reasoning_content" => msg["reasoning_content"] || ""
+    }
+    if msg["tool_calls"] do
+      Map.put(base, "tool_calls", msg["tool_calls"])
+    else
+      base
+    end
   end
   defp format_message(msg), do: msg
 
@@ -129,13 +170,24 @@ defmodule Eai.LLM.Direct do
 
       :telemetry.execute([:eai, :tool, :execute], %{system_time: System.system_time()}, %{tool: name, agent_id: agent_id})
 
-      result = execute_tool(name, args, agent_id)
+      result =
+        try do
+          execute_tool(name, args, agent_id)
+        rescue
+          e ->
+            :telemetry.execute([:eai, :tool, :error], %{system_time: System.system_time()}, %{tool: name, agent_id: agent_id, error: Exception.message(e)})
+            Jason.encode!(%{error: Exception.message(e)})
+        end
       %{role: "tool", tool_call_id: tc["id"], content: result}
     end)
 
-    assistant_msg = %{role: "assistant", content: assistant["content"] || "", tool_calls: tool_calls}
+    assistant_msg = %{
+      "role" => "assistant",
+      "content" => assistant["content"] || "",
+      "tool_calls" => tool_calls
+    }
     assistant_msg = case assistant["reasoning_content"] do
-      rc when is_binary(rc) -> Map.put(assistant_msg, :reasoning_content, rc)
+      rc when is_binary(rc) -> Map.put(assistant_msg, "reasoning_content", rc)
       _                     -> assistant_msg
     end
 
@@ -172,18 +224,37 @@ defmodule Eai.LLM.Direct do
     end
   end
 
-  defp execute_tool("get_task_result", args, _agent_id) do
+  defp execute_tool("get_task_result", args, agent_id) do
     case args["task_id"] do
       nil ->
         Jason.encode!(%{error: "missing task_id"})
 
       task_id ->
-        result = case ResultCollector.get(task_id) do
-          %{status: "complete", output: output} -> %{status: "complete", output: output}
-          %{status: status}                     -> %{status: status}
-          nil                                   -> %{status: "not_found"}
+        # 优先检查强制中断标记
+        if ResultCollector.check_and_clear_interrupt_flag(agent_id) do
+          PTYPool.interrupt_task(agent_id)
+          result = %{
+            status: "complete",
+            output: "Task forcefully interrupted by user. Please reply now."
+          }
+          result |> Utils.sanitize_value() |> Jason.encode!()
+        else
+          # 检查超时深度窗口
+          case ResultCollector.check_timeout_window(agent_id) do
+            msg when is_binary(msg) ->
+              %{status: "complete", output: msg}
+              |> Utils.sanitize_value()
+              |> Jason.encode!()
+
+            _ ->
+              result = case ResultCollector.get(task_id) do
+                %{status: "complete", output: output} -> %{status: "complete", output: output}
+                %{status: status}                     -> %{status: status}
+                nil                                   -> %{status: "not_found"}
+              end
+              result |> Utils.sanitize_value() |> Jason.encode!()
+          end
         end
-        result |> Utils.sanitize_value() |> Jason.encode!()
     end
   end
 
@@ -197,6 +268,32 @@ defmodule Eai.LLM.Direct do
 
   defp execute_tool("list_sessions", _args, _agent_id) do
     PTYPool.list_sessions()
+    |> Utils.sanitize_value()
+    |> Jason.encode!()
+  end
+
+  defp execute_tool("force_complete_task", args, agent_id) do
+    task_id = Map.get(args, "task_id", "")
+    target  = Map.get(args, "agent_id", agent_id)
+
+    case ResultCollector.force_complete(task_id) do
+      {:ok, output} ->
+        # session task_id 也要清掉，否则 PTYPool 以为还在跑
+        PTYPool.clear_task(target, task_id)
+        %{status: "complete", output: output}
+        |> Utils.sanitize_value()
+        |> Jason.encode!()
+      _ ->
+        Jason.encode!(%{error: "force_complete failed or task not found"})
+    end
+  end
+
+  defp execute_tool("write_to_session", args, agent_id) do
+    input    = Map.get(args, "input", "")
+    target   = Map.get(args, "agent_id", agent_id)
+    input    = String.replace(input, "\\n", "\n")
+    PTYPool.write_raw(target, input)
+    %{status: "ok", wrote: input}
     |> Utils.sanitize_value()
     |> Jason.encode!()
   end

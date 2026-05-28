@@ -26,3 +26,16 @@ end
 if work_dir = System.get_env("EAI_WORK_DIR") do
   config :eai, :sandbox, work_dir_root: work_dir
 end
+
+# PTY 原始输出调试（默认关闭，生产环境建议保持 false）
+if debug_pty = System.get_env("EAI_DEBUG_PTY") do
+  config :eai, :sandbox, debug_pty_output: debug_pty in ["1", "true", "yes"]
+end
+
+# priv 目录的源路径（用于 agent 工作目录软链接）
+if priv = System.get_env("EAI_PRIV_SRC") do
+  config :eai, :sandbox, priv_src: priv
+else
+  # 默认推导：项目根目录下的 priv
+  config :eai, :sandbox, priv_src: Path.expand("priv", File.cwd!())
+end

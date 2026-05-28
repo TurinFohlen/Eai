@@ -48,14 +48,14 @@ defmodule Eai.MixProject do
     [
       name: :eai,
       description: "Extreme minimal AI assistant with persistent PTY and recursive sub-agents",
-      files: ["lib", "priv", "mix.exs", "README.md", "LICENSE"],files: [
-      "lib",
-      "priv",
-      "config/**/*",        
-      "mix.exs",
-      "README.md",
-      "LICENSE"
-    ],
+      files: [
+        "lib",
+        "priv",
+        "config/**/*",
+        "mix.exs",
+        "README.md",
+        "LICENSE"
+      ],
       licenses: ["Apache-2.0"],
       links: %{"GitHub" => "https://github.com/TurinFohlen/eai"}
     ]

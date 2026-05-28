@@ -15,7 +15,10 @@ config :eai, :sandbox,
   pty_rows:           50,
   pty_init_sleep_ms:  200,
   pty_ready_sleep_ms: 300,
-  exec_sync_timeout:  30_000
+  # 这些现在没用了：
+  sentinel_left:      "___EAI_START___",
+  sentinel_right:     "___EAI_END___",
+  debug_pty_output:   false
 
 # ── Telemetry ─────────────────────────────────────────────────────────────────
 config :eai, :telemetry_events, [
@@ -27,7 +30,9 @@ config :eai, :telemetry_events, [
   {[:eai, :task, :timeout],        "Task timed out"},
   {[:eai, :llm, :request, :start], "LLM request start"},
   {[:eai, :llm, :request, :stop],  "LLM request stop"},
-  {[:eai, :tool, :execute],        "Tool executed"}
+  {[:eai, :tool, :execute],        "Tool executed"},
+  {[:eai, :llm, :request, :error], "LLM request error"},
+  {[:eai, :tool, :error],          "Tool execution error"}
 ]
 
 # ── System Prompt ─────────────────────────────────────────────────────────────

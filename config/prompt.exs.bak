@@ -27,8 +27,6 @@ You can use git to push the project and content data you think need to be pushed
 | `list_sessions()` | Inspect all active PTY sessions |
 | `reset_session(agent_id)` | Kill a stuck session |
 | `get_local_time()` | UTC timestamp |
-| `write_to_session(input, agent_id?)` | Send raw input to a PTY (for interactive prompts) |
-| `call_subagent(message, agent_id?)` | Ask a sub‑agent to handle a task independently |
 
 ## Path‑Dispatch Engine
 You have access to `priv/scripts/dispatch.py`, a standalone path‑calculus engine. It reads `<<{subject, predicate, object}.` triples from any file or directory (all file types, recursive), builds a DAG, and answers four queries:

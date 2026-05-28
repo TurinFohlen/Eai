@@ -1,22 +1,28 @@
 defmodule Eai.TelemetryHandler do
+  @moduledoc """
+  统一 telemetry 事件处理器。
+
+  所有事件以结构化 map 记录，key 固定为：
+    event / label / measurements / metadata / ts
+
+  Logger.metadata 会被 Logger 后端自动附加，JSON formatter
+  （如 logger_json）可直接接入 ELK / Loki / Datadog。
+  """
   require Logger
 
-  # 将标签映射存在模块属性中
   @labels Enum.into(Application.compile_env(:eai, :telemetry_events, []), %{})
 
   def handle_event(event, measurements, metadata, _config) do
-    label = Map.get(@labels, event, "Unknown Event")
-    Logger.info("[TELE] #{label} | #{format_measurements(measurements)} | #{format_metadata(metadata)}")
-  end
+    label = Map.get(@labels, event, inspect(event))
 
-  defp format_measurements(m) do
-    m
-    |> Enum.reject(fn {k, _} -> k == :system_time end)
-    |> Enum.map_join(" ", fn {k, v} -> "#{k}=#{v}" end)
-  end
+    # 去掉高精度系统时间（不可序列化），保留业务字段
+    measurements = Map.delete(measurements, :system_time)
 
-  defp format_metadata(m) do
-    m |> Enum.map_join(" ", fn {k, v} -> "#{k}=#{inspect(v)}" end)
+    Logger.info("telemetry",
+      event:        event,
+      label:        label,
+      measurements: measurements,
+      metadata:     metadata
+    )
   end
 end
-

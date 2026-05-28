@@ -7,7 +7,8 @@ defmodule Eai.Application do
     children = [
       {Phoenix.PubSub, name: Eai.PubSub},
       Eai.Cache.Cache,
-      Eai.Sandbox.PTYPool
+      Eai.Sandbox.PTYPool,
+      {Eai.Chat, []},
     ]
 
     opts = [strategy: :one_for_one, name: Eai.Supervisor]
@@ -16,8 +17,6 @@ defmodule Eai.Application do
 
   defp attach_telemetry do
     events = Enum.map(Application.get_env(:eai, :telemetry_events, []), fn {e, _} -> e end)
-    
-    # 使用 & 引用具名函数，BEAM 虚拟机从此闭嘴，性能也达到最优
     :telemetry.attach_many(
       "eai-unified-handler",
       events,
@@ -26,4 +25,3 @@ defmodule Eai.Application do
     )
   end
 end
-

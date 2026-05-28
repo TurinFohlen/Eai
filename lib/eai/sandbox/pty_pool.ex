@@ -17,15 +17,6 @@ defmodule Eai.Sandbox.PTYPool do
     GenServer.call(__MODULE__, {:exec, agent_id, task_id, cmd})
   end
 
-  def exec_sync(agent_id, cmd, timeout_ms \\ nil) do
-    timeout_ms = timeout_ms || sandbox_cfg(:exec_sync_timeout)
-    task_id = "task_#{System.unique_integer([:positive, :monotonic])}"
-    case exec_async(agent_id, cmd, task_id) do
-      {:ok, ^task_id} -> wait_for_result(task_id, timeout_ms, agent_id)
-      error -> error
-    end
-  end
-
   def force_reset(agent_id) do
     GenServer.call(__MODULE__, {:force_reset, agent_id})
   end
@@ -34,8 +25,16 @@ defmodule Eai.Sandbox.PTYPool do
     GenServer.call(__MODULE__, :list_sessions)
   end
 
-  def kill(agent_id) do
-    GenServer.cast(__MODULE__, {:kill, agent_id})
+  def write_raw(agent_id, input) do
+    GenServer.call(__MODULE__, {:write_raw, agent_id, input})
+  end
+
+  def interrupt_task(agent_id) do
+    GenServer.call(__MODULE__, {:interrupt_task, agent_id})
+  end
+
+  def clear_task(agent_id, task_id) do
+    GenServer.call(__MODULE__, {:clear_task, agent_id, task_id})
   end
 
   # ── GenServer ─────────────────────────────────────────────────────────────
@@ -46,7 +45,7 @@ defmodule Eai.Sandbox.PTYPool do
     session = Map.get(sessions, agent_id, %{pty: nil, task_id: nil, task_started_at: nil})
 
     if session.task_id != nil do
-      Logger.warning("PTYPool busy: agent=#{agent_id} current=#{session.task_id}")
+      Logger.warning("PTYPool busy", agent_id: agent_id, current_task: session.task_id)
       {:reply, {:error, :busy}, sessions}
     else
       {pty, sessions} = get_or_create(agent_id, sessions)
@@ -65,8 +64,9 @@ defmodule Eai.Sandbox.PTYPool do
 
       line = "echo #{ResultCollector.sentinel_left()}; #{cmd}; echo #{ResultCollector.sentinel_right()}\n"
 
-      Logger.debug("PTYPool exec: agent=#{agent_id} task=#{task_id}")
+      Logger.debug("PTYPool exec", agent_id: agent_id, task_id: task_id)
       ExPTY.write(pty, line)
+
 
       {:reply, {:ok, task_id}, sessions}
     end
@@ -75,10 +75,10 @@ defmodule Eai.Sandbox.PTYPool do
   def handle_call({:force_reset, agent_id}, _from, sessions) do
     sessions = case Map.get(sessions, agent_id) do
       nil ->
-        Logger.info("PTYPool.force_reset: #{agent_id} not in pool")
+        Logger.info("PTYPool.force_reset: not in pool", agent_id: agent_id)
         sessions
       %{pty: pty} ->
-        Logger.warning("PTYPool.force_reset: killing #{agent_id} pty=#{inspect(pty)}")
+        Logger.warning("PTYPool.force_reset: killing", agent_id: agent_id, pty: inspect(pty))
         :telemetry.execute(
           [:eai, :session, :reset],
           %{system_time: System.system_time()},
@@ -102,12 +102,53 @@ defmodule Eai.Sandbox.PTYPool do
     {:reply, info, sessions}
   end
 
-  def handle_cast({:kill, agent_id}, sessions) do
-    case Map.get(sessions, agent_id) do
-      %{pty: pty} when is_pid(pty) -> ExPTY.write(pty, "exit\n")
-      _ -> :ok
+  def handle_call({:clear_task, agent_id, task_id}, _from, sessions) do
+    # 仅当 session 当前 task 确实是 task_id 时才清空，避免误清后来的任务
+    sessions = case Map.get(sessions, agent_id) do
+      %{task_id: ^task_id} ->
+        sessions
+        |> put_in([agent_id, :task_id], nil)
+        |> put_in([agent_id, :task_started_at], nil)
+      _ ->
+        sessions
     end
-    {:noreply, sessions}
+    {:reply, :ok, sessions}
+  end
+
+  def handle_call({:write_raw, agent_id, input}, _from, sessions) do
+    case Map.get(sessions, agent_id) do
+      %{pty: pty} when is_pid(pty) ->
+        ExPTY.write(pty, input)
+        {:reply, :ok, sessions}
+      nil ->
+        {:reply, {:error, :no_session}, sessions}
+    end
+  end
+
+  def handle_call({:interrupt_task, agent_id}, _from, sessions) do
+    case Map.get(sessions, agent_id) do
+      %{task_id: task_id, pty: pty} when is_binary(task_id) ->
+        if is_pid(pty) and Process.alive?(pty) do
+          # 1. 发送 Ctrl+C
+          ExPTY.write(pty, <<3>>)
+  
+          # 2. 只 echo 消息 + 右哨兵（左哨兵已经在 PTY 流中）
+          right = ResultCollector.sentinel_right()
+          msg   = "Task forcefully interrupted by user. Please reply now."
+          b64   = Base.encode64(msg <> right)
+          cmd   = "echo #{b64} | base64 -d\n"
+  
+          ExPTY.write(pty, cmd)
+  
+          Logger.info("PTYPool interrupt_task: Ctrl+C + right sentinel echo sent",
+            agent_id: agent_id, task_id: task_id)
+        end
+  
+        {:reply, :ok, sessions}
+  
+      _ ->
+        {:reply, {:error, :no_active_task}, sessions}
+    end
   end
 
   def handle_cast({:remove, agent_id}, sessions) do
@@ -126,7 +167,7 @@ defmodule Eai.Sandbox.PTYPool do
         sessions = case ResultCollector.collect(task_id, data) do
           {:complete, output} ->
             duration = System.monotonic_time(:millisecond) - (started_at || 0)
-            Logger.info("PTYPool task complete: agent=#{agent_id} task=#{task_id} #{duration}ms output=#{byte_size(output)}b")
+            Logger.info("PTYPool task complete", agent_id: agent_id, task_id: task_id, duration_ms: duration, output_bytes: byte_size(output))
             :telemetry.execute(
               [:eai, :task, :complete],
               %{duration_ms: duration, output_size: byte_size(output)},
@@ -137,7 +178,7 @@ defmodule Eai.Sandbox.PTYPool do
             |> put_in([agent_id, :task_started_at], nil)
 
           other ->
-            Logger.debug("PTYPool collect: agent=#{agent_id} task=#{task_id} state=#{inspect(other)}")
+            Logger.debug("PTYPool collect", agent_id: agent_id, task_id: task_id, state: inspect(other))
             sessions
         end
 
@@ -149,38 +190,11 @@ defmodule Eai.Sandbox.PTYPool do
   end
 
   def handle_info(msg, sessions) do
-    Logger.debug("PTYPool unhandled msg: #{inspect(msg)}")
+    Logger.debug("PTYPool unhandled msg", msg: inspect(msg))
     {:noreply, sessions}
   end
 
-  # ── 内部流转控制 ──────────────────────────────────────────────────────────
-
-  defp wait_for_result(task_id, timeout_ms, agent_id) do
-    deadline = System.monotonic_time(:millisecond) + timeout_ms
-    do_wait(task_id, deadline, agent_id)
-  end
-
-  defp do_wait(task_id, deadline, agent_id) do
-    if System.monotonic_time(:millisecond) >= deadline do
-      :telemetry.execute(
-        [:eai, :task, :timeout],
-        %{system_time: System.system_time()},
-        %{agent_id: agent_id, task_id: task_id}
-      )
-      Logger.warning("PTYPool timeout: agent=#{agent_id} task=#{task_id}, force-completing")
-      case ResultCollector.force_complete(task_id) do
-        {:ok, output} -> {:ok, output}
-        _ -> {:error, :timeout}
-      end
-    else
-      case ResultCollector.get(task_id) do
-        %{status: "complete", output: output} -> {:ok, output}
-        _ ->
-          Process.sleep(50)
-          do_wait(task_id, deadline, agent_id)
-      end
-    end
-  end
+  # ── 内部函数 ──────────────────────────────────────────────────────────────
 
   defp get_or_create(agent_id, sessions) do
     case Map.get(sessions, agent_id) do
@@ -189,6 +203,22 @@ defmodule Eai.Sandbox.PTYPool do
         work_root = sandbox_cfg(:work_dir_root)
         work_dir  = "#{work_root}/#{agent_id}"
         File.mkdir_p!(work_dir)
+
+        priv_src = sandbox_cfg(:priv_src)
+        priv_link = Path.join(work_dir, "priv")
+        cond do
+          priv_src && File.exists?(priv_src) && !File.exists?(priv_link) ->
+            case File.ln_s(priv_src, priv_link) do
+              :ok ->
+                Logger.info("PTYPool priv symlink created", agent_id: agent_id, src: priv_src, link: priv_link)
+              {:error, reason} ->
+                Logger.warning("PTYPool priv symlink failed", agent_id: agent_id, reason: reason)
+            end
+          File.exists?(priv_link) ->
+            :ok
+          true ->
+            Logger.warning("PTYPool priv src not found, skip symlink", agent_id: agent_id, priv_src: priv_src)
+        end
 
         shell = System.find_executable("bash") || "/bin/sh"
         cols  = sandbox_cfg(:pty_cols)
@@ -208,7 +238,6 @@ defmodule Eai.Sandbox.PTYPool do
 
         Process.sleep(sandbox_cfg(:pty_init_sleep_ms))
 
-        # 冲洗 Bash 启动时的初始化噪声（提示符、转义序列等）
         flush_init_noise = fn fun ->
           receive do
             {:pty_data, ^agent_id, _data} -> fun.(fun)
@@ -222,7 +251,7 @@ defmodule Eai.Sandbox.PTYPool do
           %{system_time: System.system_time()},
           %{agent_id: agent_id, pty: inspect(pty)}
         )
-        Logger.info("PTYPool: spawned #{agent_id} pid=#{inspect(pty)}")
+        Logger.info("PTYPool spawned", agent_id: agent_id, pty: inspect(pty))
 
         Process.sleep(sandbox_cfg(:pty_ready_sleep_ms))
         session = %{pty: pty, task_id: nil, task_started_at: nil}
