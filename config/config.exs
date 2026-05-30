@@ -11,11 +11,11 @@ config :eai, :llm,
 config :eai, :sandbox,
   work_dir_root:      "/home/eai_agents",
   script_tmp_prefix:  "/tmp/eai_",
+  # shared_repo_path:   "/custom/path/to/shared.git",
   pty_cols:           200,
   pty_rows:           50,
   pty_init_sleep_ms:  200,
   pty_ready_sleep_ms: 300,
-  # 这些现在没用了：
   sentinel_left:      "___EAI_START___",
   sentinel_right:     "___EAI_END___",
   debug_pty_output:   false

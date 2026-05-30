@@ -1,5 +1,6 @@
 defmodule Eai.LLM.Direct do
   @moduledoc "直接调用 DeepSeek API，含 telemetry 埋点"
+  @right_sentinel Application.compile_env(:eai, [:sandbox, :sentinel_right], "___EAI_END___")
 
   alias Eai.ResultCollector
   alias Eai.Sandbox.PTYPool
@@ -60,46 +61,59 @@ defmodule Eai.LLM.Direct do
     }},
     %{type: "function", function: %{
         name: "call_subagent",
-        description: "Ask another independent AI agent to solve a sub-task. Returns its final answer. Do not use recursively.",
+        description: """
+        Dispatch a sub-task to an independent AI agent. Returns a subagent_task_id immediately (async).
+        Use get_subagent_result to poll for the answer. Do not use recursively.
+        """,
         parameters: %{type: "object",
           properties: %{
             message: %{type: "string", description: "The task or question for the sub-agent."},
-            agent_id: %{type: "string", description: "Optional session ID for the sub-agent. Defaults to 'subagent'."}
+            agent_id: %{type: "string", description: "Optional session ID for the sub-agent. Defaults to a unique ID."}
           },
           required: ["message"]
         }
     }},
     %{type: "function", function: %{
+        name: "get_subagent_result",
+        description: """
+        Retrieve the result of a previously dispatched sub-agent task by subagent_task_id.
+        Poll until status == \"complete\". Wait at least 5 s after call_subagent before first poll.
+        """,
+        parameters: %{type: "object",
+          properties: %{subagent_task_id: %{type: "string", description: "subagent_task_id returned by call_subagent."}},
+          required: ["subagent_task_id"]
+        }
+    }},
+
+# ... 在 @tools 列表内 ...
+
+    %{type: "function", function: %{
         name: "write_to_session",
         description: """
         Write raw bytes directly to a PTY session's stdin, bypassing the sentinel wrapper.
-        Use ONLY when the session is waiting for interactive input (e.g. after seeing [Y/n], Password:, etc.).
+        Use for interactive input (e.g. answering [Y/n] prompts) or for sending control characters.
         Do NOT use for normal script execution — use execute_script for that.
+
+        Supported escape sequences (write them literally in the input string):
+          \\n   newline
+          \\r   carriage return
+          \\t   tab
+          \\x03 Ctrl+C (interrupt running task)
+          \\x04 Ctrl+D (EOF)
+          \\x1a Ctrl+Z
+
+        **Example:** to interrupt a running task, send Ctrl+C then echo the right sentinel:
+          input: "\\x03\\necho #{@right_sentinel}\\n"
+        This closes the current output stream so subsequent get_task_result calls work correctly.
         """,
         parameters: %{type: "object",
           properties: %{
-            input:    %{type: "string", description: "The exact string to write to the PTY (e.g. \"y\\n\", \"no\\n\", \"mypassword\\n\")."},
+            input:    %{type: "string", description: "String to write, using escape sequences for control chars (e.g. \"y\\n\", \"\\x03\\n\")."},
             agent_id: %{type: "string", description: "PTY session ID (default: 'default')."}
           },
           required: ["input"]
         }
     }},
-    %{type: "function", function: %{
-        name: "force_complete_task",
-        description: """
-        Force-collect whatever output a task has produced so far and mark it complete.
-        Use when a task is stuck or taking too long and you want to retrieve partial output
-        without sending Ctrl+C. The task_id must be the one returned by execute_script.
-        After calling this, the session is unlocked and ready for the next execute_script.
-        """,
-        parameters: %{type: "object",
-          properties: %{
-            task_id:  %{type: "string", description: "The task_id to force-complete."},
-            agent_id: %{type: "string", description: "PTY session ID (default: 'default')."}
-          },
-          required: ["task_id"]
-        }
-    }}
   ]
 
   def run(messages, agent_id \\ "default") do
@@ -139,12 +153,12 @@ defmodule Eai.LLM.Direct do
       {:ok, %{status: status, body: body}} ->
         :telemetry.execute([:eai, :llm, :request, :stop], %{duration_ms: duration}, %{agent_id: agent_id, status: :error})
         :telemetry.execute([:eai, :llm, :request, :error], %{duration_ms: duration}, %{agent_id: agent_id, reason: "HTTP #{status}", body: inspect(body)})
-        {:error, "HTTP #{status}: #{inspect(body)}"}
+        {:error, "HTTP #{status}: #{inspect(body)}", messages}
 
       {:error, reason} ->
         :telemetry.execute([:eai, :llm, :request, :stop], %{duration_ms: duration}, %{agent_id: agent_id, status: :error})
         :telemetry.execute([:eai, :llm, :request, :error], %{duration_ms: duration}, %{agent_id: agent_id, reason: inspect(reason)})
-        {:error, reason}
+        {:error, reason, messages}
     end
   end
 
@@ -164,38 +178,43 @@ defmodule Eai.LLM.Direct do
   defp format_message(msg), do: msg
 
   defp handle_response(%{"tool_calls" => tool_calls} = assistant, history, agent_id) do
-    tool_results = Enum.map(tool_calls, fn tc ->
-      name = tc["function"]["name"]
-      args = tc["function"]["arguments"] |> decode_args() |> Utils.sanitize_value()
+    results =
+      Enum.map(tool_calls, fn tc ->
+        name = tc["function"]["name"]
+        args = tc["function"]["arguments"] |> decode_args() |> Utils.sanitize_value()
 
-      :telemetry.execute([:eai, :tool, :execute], %{system_time: System.system_time()}, %{tool: name, agent_id: agent_id})
+        :telemetry.execute([:eai, :tool, :execute], %{system_time: System.system_time()},
+          %{tool: name, agent_id: agent_id})
 
-      result =
-        try do
-          execute_tool(name, args, agent_id)
-        rescue
-          e ->
-            :telemetry.execute([:eai, :tool, :error], %{system_time: System.system_time()}, %{tool: name, agent_id: agent_id, error: Exception.message(e)})
-            Jason.encode!(%{error: Exception.message(e)})
+        content =
+          try do
+            execute_tool(name, args, agent_id)
+          rescue
+            e ->
+              :telemetry.execute([:eai, :tool, :error], %{system_time: System.system_time()},
+                %{tool: name, agent_id: agent_id, error: Exception.message(e)})
+              Jason.encode!(%{error: Exception.message(e)})
+          end
+
+        %{role: "tool", tool_call_id: tc["id"], content: content}
+      end)
+
+    assistant_msg =
+      %{"role" => "assistant", "content" => assistant["content"] || "",
+        "tool_calls" => tool_calls}
+      |> then(fn m ->
+        case assistant["reasoning_content"] do
+          rc when is_binary(rc) -> Map.put(m, "reasoning_content", rc)
+          _                     -> m
         end
-      %{role: "tool", tool_call_id: tc["id"], content: result}
-    end)
+      end)
 
-    assistant_msg = %{
-      "role" => "assistant",
-      "content" => assistant["content"] || "",
-      "tool_calls" => tool_calls
-    }
-    assistant_msg = case assistant["reasoning_content"] do
-      rc when is_binary(rc) -> Map.put(assistant_msg, "reasoning_content", rc)
-      _                     -> assistant_msg
-    end
-
-    run(history ++ [assistant_msg] ++ tool_results, agent_id)
+    run(history ++ [assistant_msg] ++ results, agent_id)
   end
 
-  defp handle_response(%{"content" => content}, _history, _agent_id) do
-    {:ok, Utils.sanitize_value(content)}
+  defp handle_response(%{"content" => content}, history, _agent_id) do
+    final_msg = %{"role" => "assistant", "content" => Utils.sanitize_value(content)}
+    {:ok, Utils.sanitize_value(content), history ++ [final_msg]}
   end
 
   # ── 工具执行 ──────────────────────────────────────────────────────────────
@@ -248,9 +267,15 @@ defmodule Eai.LLM.Direct do
 
             _ ->
               result = case ResultCollector.get(task_id) do
-                %{status: "complete", output: output} -> %{status: "complete", output: output}
-                %{status: status}                     -> %{status: status}
-                nil                                   -> %{status: "not_found"}
+                %{status: "complete", output: output} ->
+                  %{status: "complete", output: output}
+                %{started_at: started_at} when not is_nil(started_at) ->
+                  elapsed = System.monotonic_time(:millisecond) - started_at
+                  %{status: "running", time: elapsed}
+                %{} ->
+                  %{status: "running", time: 0}
+                nil ->
+                  %{status: "not_found"}
               end
               result |> Utils.sanitize_value() |> Jason.encode!()
           end
@@ -289,26 +314,63 @@ defmodule Eai.LLM.Direct do
   end
 
   defp execute_tool("write_to_session", args, agent_id) do
-    input    = Map.get(args, "input", "")
-    target   = Map.get(args, "agent_id", agent_id)
-    input    = String.replace(input, "\\n", "\n")
-    PTYPool.write_raw(target, input)
-    %{status: "ok", wrote: input}
+    input  = Map.get(args, "input", "")
+    target = Map.get(args, "agent_id", agent_id)
+    raw    = unescape(input)
+    PTYPool.write_raw(target, raw)
+    %{status: "ok", wrote: inspect(raw)}
     |> Utils.sanitize_value()
     |> Jason.encode!()
   end
 
   defp execute_tool("call_subagent", args, _parent_agent_id) do
-    message  = Map.get(args, "message", "")
-    agent_id = Map.get(args, "agent_id", "subagent_#{System.unique_integer([:positive])}")
+    message          = Map.get(args, "message", "")
+    agent_id         = Map.get(args, "agent_id", "subagent_#{System.unique_integer([:positive])}")
+    subagent_task_id = "satask_#{System.unique_integer([:positive, :monotonic])}"
 
-    case Eai.Chat.send(message, agent_id) do
-      {:ok, response} ->
-        %{status: "success", answer: response, sub_agent_id: agent_id}
-        |> Utils.sanitize_value() |> Jason.encode!()
-      {:error, reason} ->
-        %{status: "error", reason: inspect(reason)}
-        |> Utils.sanitize_value() |> Jason.encode!()
+    # 立即写入初始状态，避免轮询时 get 到 nil 误判 task_not_found
+    Eai.Cache.Cache.put("subagent_result:#{subagent_task_id}", %{
+      status: "running",
+      started_at: System.monotonic_time(:millisecond)
+    })
+
+    Task.start(fn ->
+      result_entry =
+        try do
+          case Eai.Chat.send(message, agent_id: agent_id) do
+            {:ok, response}  -> %{status: "complete", answer: response, sub_agent_id: agent_id}
+            {:error, reason} -> %{status: "error", reason: inspect(reason), sub_agent_id: agent_id}
+          end
+        rescue
+          e -> %{status: "error", reason: Exception.message(e), sub_agent_id: agent_id}
+        end
+
+      Eai.Cache.Cache.put("subagent_result:#{subagent_task_id}", result_entry)
+    end)
+
+    %{subagent_task_id: subagent_task_id, status: "queued", sub_agent_id: agent_id}
+    |> Utils.sanitize_value()
+    |> Jason.encode!()
+  end
+
+  defp execute_tool("get_subagent_result", args, _agent_id) do
+    case args["subagent_task_id"] do
+      nil ->
+        Jason.encode!(%{error: "missing subagent_task_id"})
+
+      subagent_task_id ->
+        case Eai.Cache.Cache.get("subagent_result:#{subagent_task_id}") do
+          nil ->
+            Jason.encode!(%{error: "task_not_found"})
+
+          %{status: status, started_at: started_at}
+              when status not in ["complete", "error"] ->
+            elapsed = System.monotonic_time(:millisecond) - started_at
+            Jason.encode!(%{status: "running", time: elapsed})
+
+          result ->
+            result |> Utils.sanitize_value() |> Jason.encode!()
+        end
     end
   end
 
@@ -319,4 +381,15 @@ defmodule Eai.LLM.Direct do
   defp decode_args(nil), do: %{}
   defp decode_args(""),  do: %{}
   defp decode_args(s),   do: Jason.decode!(s)
+
+  # 将模型输出的转义序列字面量还原为实际字节
+  defp unescape(input) do
+    input
+    |> String.replace("\\n",   "\n")
+    |> String.replace("\\r",   "\r")
+    |> String.replace("\\t",   "\t")
+    |> String.replace("\\x03", <<3>>)   # Ctrl+C
+    |> String.replace("\\x04", <<4>>)   # Ctrl+D (EOF)
+    |> String.replace("\\x1a", <<26>>)  # Ctrl+Z
+  end
 end

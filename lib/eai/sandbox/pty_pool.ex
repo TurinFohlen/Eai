@@ -14,7 +14,7 @@ defmodule Eai.Sandbox.PTYPool do
 
   def exec_async(agent_id, cmd, task_id \\ nil) do
     task_id = task_id || "task_#{System.unique_integer([:positive, :monotonic])}"
-    GenServer.call(__MODULE__, {:exec, agent_id, task_id, cmd})
+    GenServer.call(__MODULE__, {:exec, agent_id, task_id, cmd}, 15_000)  
   end
 
   def force_reset(agent_id) do
@@ -67,16 +67,23 @@ defmodule Eai.Sandbox.PTYPool do
       Logger.debug("PTYPool exec", agent_id: agent_id, task_id: task_id)
       ExPTY.write(pty, line)
 
-
       {:reply, {:ok, task_id}, sessions}
     end
   end
 
   def handle_call({:force_reset, agent_id}, _from, sessions) do
+    # 1. 强制完成该 agent 当前正在进行的任务（如果有），避免缓存泄漏
+    old_task_id = get_in(sessions, [agent_id, :task_id])
+    if is_binary(old_task_id) do
+      ResultCollector.force_complete(old_task_id)
+    end
+
+    # 2. 杀死 PTY 进程并从池中彻底移除 session
     sessions = case Map.get(sessions, agent_id) do
       nil ->
         Logger.info("PTYPool.force_reset: not in pool", agent_id: agent_id)
         sessions
+
       %{pty: pty} ->
         Logger.warning("PTYPool.force_reset: killing", agent_id: agent_id, pty: inspect(pty))
         :telemetry.execute(
@@ -87,6 +94,7 @@ defmodule Eai.Sandbox.PTYPool do
         if is_pid(pty) and Process.alive?(pty), do: Process.exit(pty, :kill)
         Map.delete(sessions, agent_id)
     end
+
     {:reply, :ok, sessions}
   end
 
@@ -102,15 +110,14 @@ defmodule Eai.Sandbox.PTYPool do
     {:reply, info, sessions}
   end
 
-  def handle_call({:clear_task, agent_id, task_id}, _from, sessions) do
-    # 仅当 session 当前 task 确实是 task_id 时才清空，避免误清后来的任务
+  def handle_call({:clear_task, agent_id, _task_id}, _from, sessions) do
+    # 无条件清理指定 agent 的 task 状态，不再匹配具体的 task_id
     sessions = case Map.get(sessions, agent_id) do
-      %{task_id: ^task_id} ->
+      nil -> sessions
+      _ ->
         sessions
         |> put_in([agent_id, :task_id], nil)
         |> put_in([agent_id, :task_started_at], nil)
-      _ ->
-        sessions
     end
     {:reply, :ok, sessions}
   end
@@ -131,21 +138,21 @@ defmodule Eai.Sandbox.PTYPool do
         if is_pid(pty) and Process.alive?(pty) do
           # 1. 发送 Ctrl+C
           ExPTY.write(pty, <<3>>)
-  
+
           # 2. 只 echo 消息 + 右哨兵（左哨兵已经在 PTY 流中）
           right = ResultCollector.sentinel_right()
           msg   = "Task forcefully interrupted by user. Please reply now."
           b64   = Base.encode64(msg <> right)
           cmd   = "echo #{b64} | base64 -d\n"
-  
+
           ExPTY.write(pty, cmd)
-  
+
           Logger.info("PTYPool interrupt_task: Ctrl+C + right sentinel echo sent",
             agent_id: agent_id, task_id: task_id)
         end
-  
+
         {:reply, :ok, sessions}
-  
+
       _ ->
         {:reply, {:error, :no_active_task}, sessions}
     end

@@ -2,6 +2,7 @@ defmodule Eai.Application do
   use Application
 
   def start(_type, _args) do
+    IO.puts("ℹ️  EAI started. Type Eai.help() for full documentation.\n")
     attach_telemetry()
 
     children = [

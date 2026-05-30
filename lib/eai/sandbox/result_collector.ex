@@ -19,7 +19,7 @@ defmodule Eai.ResultCollector do
   # ── 任务初始化 ──────────────────────────────────────────────────────────────
 
   def init_task(task_id) do
-    Cache.put("result:#{task_id}", %{status: "collecting"})
+    Cache.put("result:#{task_id}", %{status: "collecting", started_at: System.monotonic_time(:millisecond)})
     Cache.put("result:#{task_id}:buffer", "")
   end
 
@@ -84,7 +84,7 @@ defmodule Eai.ResultCollector do
   def get(task_id) do
     case Cache.get("result:#{task_id}") do
       %{status: "complete"} = r -> %{output: r.output, status: "complete"}
-      %{status: status}         -> %{output: "",       status: status}
+      %{status: status} = r     -> %{status: status, started_at: Map.get(r, :started_at)}
       nil                       -> nil
     end
   end
@@ -138,63 +138,54 @@ defmodule Eai.ResultCollector do
     end
   end
 
-  # ── 超时提醒窗口（深度计数器，文件管道跨进程共享） ────────────────────────
+  # ── 超时提醒窗口（深度计数器，Cache 跨进程共享） ─────────────────────────
 
-  defp window_file(agent_id), do: Path.join(System.tmp_dir!(), "eai_timeout_#{agent_id}")
+  defp window_key(agent_id),    do: "agent:#{agent_id}:timeout_window"
+  defp interrupt_key(agent_id), do: "agent:#{agent_id}:interrupt_flag"
 
   @doc """
-  触发超时提醒窗口：在临时文件中写入超时深度。
+  触发超时提醒窗口：在 Cache 中写入超时深度。
   每次模型调用 get_task_result 时会消耗一层深度并返回提醒消息。
   """
   def trigger_timeout_window(agent_id, depth \\ 1) do
-    File.write!(window_file(agent_id), Integer.to_string(depth))
-    Logger.info("Timeout window triggered for #{agent_id}, depth: #{depth} (file)")
+    Cache.put(window_key(agent_id), depth)
+    Logger.info("Timeout window triggered for #{agent_id}, depth: #{depth} (cache)")
   end
 
   @doc """
-  检查当前超时窗口深度。如果 >0，消耗一层并返回提醒消息；否则删除文件并返回 nil。
+  检查当前超时窗口深度。如果 >0，消耗一层并返回提醒消息；否则清除并返回 nil。
   """
   def check_timeout_window(agent_id) do
-    file = window_file(agent_id)
-    if File.exists?(file) do
-      case File.read(file) do
-        {:ok, content} ->
-          case Integer.parse(String.trim(content)) do
-            {depth, _} when depth > 0 ->
-              File.write!(file, Integer.to_string(depth - 1))
-              Logger.info("Timeout window consumed for #{agent_id}, remaining: #{depth - 1}")
-              "The timeout you set has been reached. Please safely stop what you're doing and reply now."
-            _ ->
-              File.rm(file)
-              nil
-          end
-        _ ->
-          nil
-      end
-    else
-      nil
+    key = window_key(agent_id)
+    case Cache.get(key) do
+      depth when is_integer(depth) and depth > 0 ->
+        Cache.put(key, depth - 1)
+        Logger.info("Timeout window consumed for #{agent_id}, remaining: #{depth - 1}")
+        "The timeout you set has been reached. Please safely stop what you're doing and reply now."
+      _ ->
+        Cache.delete(key)
+        nil
     end
   end
 
-  # ── 中断标记（强制中断，文件管道） ───────────────────────────────────────
-
-  defp interrupt_flag_file(agent_id), do: Path.join(System.tmp_dir!(), "eai_interrupt_#{agent_id}")
+  # ── 中断标记（强制中断，Cache） ──────────────────────────────────────────
 
   @doc "设置强制中断标记"
   def set_interrupt_flag(agent_id) do
-    File.write!(interrupt_flag_file(agent_id), "1")
+    Cache.put(interrupt_key(agent_id), true)
     Logger.info("Interrupt flag set for #{agent_id}")
   end
 
   @doc "检查并清除中断标记，返回 true/false"
   def check_and_clear_interrupt_flag(agent_id) do
-    file = interrupt_flag_file(agent_id)
-    if File.exists?(file) do
-      File.rm(file)
-      Logger.info("Interrupt flag consumed for #{agent_id}")
-      true
-    else
-      false
+    key = interrupt_key(agent_id)
+    case Cache.get(key) do
+      true ->
+        Cache.delete(key)
+        Logger.info("Interrupt flag consumed for #{agent_id}")
+        true
+      _ ->
+        false
     end
   end
 
