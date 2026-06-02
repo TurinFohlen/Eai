@@ -101,12 +101,28 @@ defmodule Eai.LLM.Direct do
   # ── Provider-specific request building ───────────────────────────────
 
   defp build_request_body(model, prompt, formatted, effort, :anthropic, schemas) do
+    # system as content-block list with cache breakpoint — cached at write (+25%),
+    # subsequent reads hit cache (-90% cost).  ephemeral TTL = 5 min.
+    system = [%{type: "text", text: prompt, cache_control: %{type: "ephemeral"}}]
+
+    anthropic_tools = to_anthropic_tools(schemas)
+
+    # Pin cache_control on the last tool so system + all tools sit inside the
+    # cached prefix.  No tools → system prompt alone is still cached.
+    tools =
+      case List.pop_at(anthropic_tools, -1) do
+        {last, rest} when not is_nil(last) ->
+          rest ++ [Map.put(last, :cache_control, %{type: "ephemeral"})]
+        _ ->
+          anthropic_tools
+      end
+
     body = %{
       model:      model,
       max_tokens: 8192,
-      system:     prompt,
+      system:     system,
       messages:   formatted,
-      tools:      to_anthropic_tools(schemas)
+      tools:      tools
     }
     if effort, do: Map.put(body, :thinking, %{type: "enabled", budget_tokens: 5000}), else: body
   end
