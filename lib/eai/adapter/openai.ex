@@ -124,7 +124,7 @@ defmodule Eai.Adapter.OpenAI do
 
     text_content =
       text_blocks
-      |> Enum.map(fn {:text, t} -> t end)
+      |> Enum.map(fn {:text, t} -> t; {:thinking, t} -> "[thinking] #{t}" end)
       |> Enum.join("\n")
 
     msg = %{
@@ -158,20 +158,22 @@ defmodule Eai.Adapter.OpenAI do
 
   # Split assistant blocks into text vs tool_use
   defp split_assistant_blocks(blocks) do
-    text_blocks = Enum.filter(blocks, &match?({:text, _}, &1))
+    text_blocks = Enum.filter(blocks, &(match?({:text, _}, &1) or match?({:thinking, _}, &1)))
     tool_use_blocks = Enum.filter(blocks, &match?({:tool_use, _}, &1))
     {text_blocks, tool_use_blocks}
   end
 
   defp blocks_to_openai_content(blocks) do
-    if Enum.all?(blocks, &match?({:text, _}, &1)) do
+    if Enum.all?(blocks, &(match?({:text, _}, &1) or match?({:thinking, _}, &1))) do
       # Pure text: serialize as string
       blocks
-      |> Enum.map(fn {:text, t} -> t end)
+      |> Enum.map(fn {:text, t} -> t; {:thinking, t} -> "[thinking] #{t}" end)
       |> Enum.join("\n")
     else
       # Mixed content: content array
       Enum.map(blocks, fn
+        {:thinking, t} ->
+          %{"type" => "text", "text" => "[thinking] #{t}"}
         {:text, t} ->
           %{"type" => "text", "text" => t}
         {:image, kw} ->

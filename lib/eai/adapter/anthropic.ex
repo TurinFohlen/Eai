@@ -88,13 +88,20 @@ defmodule Eai.Adapter.Anthropic do
     msgs = msgs ++ Enum.map(tool_results, fn {:tool_result, kw} ->
       result_content = Enum.map(kw[:content], &ir_block_to_anthropic_content/1)
 
+      # Anthropic requires tool_result content to be a string (not array) when pure text
+      result_payload = if match?([%{type: "text", text: _}], result_content) do
+        hd(result_content).text
+      else
+        result_content
+      end
+
       %{
         role: "user",
         content: [
           %{
             type: "tool_result",
             tool_use_id: kw[:tool_use_id],
-            content: result_content
+            content: result_payload
           }
         ]
       }
@@ -143,6 +150,10 @@ defmodule Eai.Adapter.Anthropic do
     }
   end
 
+  defp ir_block_to_anthropic_content({:thinking, t}) do
+    %{type: "thinking", thinking: t}
+  end
+
   defp ir_block_to_anthropic_content({:tool_use, kw}) do
     %{
       type: "tool_use",
@@ -161,6 +172,15 @@ defmodule Eai.Adapter.Anthropic do
 
   defp anthropic_block_to_ir(%{"type" => "text", "text" => t}) do
     {:text, t}
+  end
+
+  # Thinking blocks — preserve even empty ones (Anthropic requires round-trip)
+  defp anthropic_block_to_ir(%{"type" => "thinking", "thinking" => t}) do
+    {:thinking, t}
+  end
+
+  defp anthropic_block_to_ir(%{"type" => "redacted_thinking", "data" => t}) do
+    {:thinking, t}
   end
 
   # Handle string content from Anthropic (legacy: assistant content as string)
@@ -188,6 +208,8 @@ defmodule Eai.Adapter.Anthropic do
 
   # For from_messages: raw user content → IR block
   defp anthropic_content_to_ir_block(%{"type" => "text", "text" => t}), do: {:text, t}
+  defp anthropic_content_to_ir_block(%{"type" => "thinking", "thinking" => t}), do: {:thinking, t}
+  defp anthropic_content_to_ir_block(%{"type" => "redacted_thinking", "data" => t}), do: {:thinking, t}
   defp anthropic_content_to_ir_block(%{"type" => "image", "source" => %{"type" => "base64", "media_type" => mime, "data" => data}}) do
     format = String.replace_prefix(mime, "image/", "")
     {:image, [format: format, source: {:bytes, data}]}

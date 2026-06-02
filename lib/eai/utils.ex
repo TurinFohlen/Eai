@@ -56,7 +56,7 @@ defmodule Eai.Utils do
   # {:image, [format: fmt, source: {:bytes, data}]}
   # {:tool_use, [tool_use_id: id, name: name, input: map]}
   # {:tool_result, [tool_use_id: id, content: [blocks]]}
-  def sanitize_value({tag, payload}) when is_atom(tag) and tag in [:text, :image, :tool_use, :tool_result] do
+  def sanitize_value({tag, payload}) when is_atom(tag) and tag in [:text, :thinking, :image, :tool_use, :tool_result] do
     {tag, sanitize_value(payload)}
   end
 

@@ -13,6 +13,7 @@ defmodule Eai.Message do
 
   @type content_block ::
           {:text, String.t()}
+          | {:thinking, String.t()}
           | {:image, [format: String.t(), source: {:bytes, String.t()}]}
           | {:tool_use, [tool_use_id: String.t(), name: String.t(), input: map()]}
           | {:tool_result, [tool_use_id: String.t(), content: [content_block()]]}
@@ -124,6 +125,10 @@ defmodule Eai.Message do
     %{"text" => t}
   end
 
+  defp block_to_map({:thinking, t}) do
+    %{"thinking" => t}
+  end
+
   defp block_to_map({:image, kw}) do
     %{
       "image" => %{
@@ -154,6 +159,10 @@ defmodule Eai.Message do
 
   defp block_from_map(%{"text" => t}) do
     {:text, t}
+  end
+
+  defp block_from_map(%{"thinking" => t}) do
+    {:thinking, t}
   end
 
   defp block_from_map(%{"image" => %{"format" => fmt, "source" => %{"bytes" => data}}}) do

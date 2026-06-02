@@ -61,6 +61,8 @@ defmodule Eai.Adapter.Converse do
   # ── Private ──────────────────────────────────────────────────────────
 
   defp block_from_converse(%{"text" => t}), do: {:text, t}
+  defp block_from_converse(%{"thinking" => t}), do: {:thinking, t}
+  defp block_from_converse(%{"redactedThinking" => t}), do: {:thinking, t}
 
   defp block_from_converse(%{"toolUse" => %{"toolUseId" => id, "name" => name, "input" => input}}) do
     {:tool_use, [tool_use_id: id, name: name, input: input]}
