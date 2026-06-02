@@ -6,7 +6,7 @@ defmodule Eai.Application do
     attach_telemetry()
 
     children = [
-      {Phoenix.PubSub, name: Eai.PubSub},
+      {Phoenix.PubSub, name: Eai.Naming.pubsub()},
       Eai.Cache.Cache,
       Eai.Sandbox.PTYPool,
       {Eai.Chat, []},

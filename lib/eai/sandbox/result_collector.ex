@@ -1,8 +1,9 @@
 defmodule Eai.ResultCollector do
   @moduledoc """
-  基于镜像双倍回显（奇偶校验）的无状态流式收集器。
-  只截取第 2 次 START 和第 2 次 END 之间的纯净执行结果。
-  同时提供超时提醒窗口（深度计数器）和中断标记（文件管道）机制。
+  基于单次哨兵匹配的无状态流式收集器。
+  截取第 1 次 START 和第 1 次 END 之间的纯净执行结果。
+  （PTY 命令行用 base64 包装哨兵，回显中不再出现明文哨兵，无需奇偶校验。）
+  同时提供超时提醒窗口（深度计数器）和中断标记（Cache）机制。
   """
 
   alias Eai.Cache.Cache
@@ -34,7 +35,7 @@ defmodule Eai.ResultCollector do
       IO.puts("=== END PTY RAW ===\n")
     end
 
-    data = Eai.Utils.sanitize_value(data)
+    data    = Eai.Utils.sanitize_value(data)
     buf_key = "result:#{task_id}:buffer"
     res_key = "result:#{task_id}"
 
@@ -58,10 +59,10 @@ defmodule Eai.ResultCollector do
     if current.status == "complete" do
       {:complete, current.output}
     else
-      case {find_nth(clean_buf, @left, 2), find_nth(clean_buf, @right, 2)} do
-        {{start_pos, start_len}, {end_pos, _end_len}} ->
+      case {find_first(clean_buf, @left), find_first(clean_buf, @right)} do
+        {{start_pos, start_len}, {end_pos, _end_len}} when end_pos > start_pos ->
           core_start = start_pos + start_len
-          core_len = max(end_pos - core_start, 0)
+          core_len   = max(end_pos - core_start, 0)
 
           output =
             clean_buf
@@ -100,7 +101,7 @@ defmodule Eai.ResultCollector do
     buf_key = "result:#{task_id}:buffer"
     res_key = "result:#{task_id}"
 
-    buffer = Cache.get(buf_key) || ""
+    buffer  = Cache.get(buf_key) || ""
     current = Cache.get(res_key)
 
     if debug? do
@@ -113,22 +114,20 @@ defmodule Eai.ResultCollector do
       {:ok, current.output}
     else
       output =
-        case {find_nth(buffer, @left, 2), find_nth(buffer, @right, 2)} do
-          {{start_pos, start_len}, {end_pos, _end_len}} ->
+        case {find_first(buffer, @left), find_first(buffer, @right)} do
+          {{start_pos, start_len}, {end_pos, _}} when end_pos > start_pos ->
             core_start = start_pos + start_len
-            core_len = max(end_pos - core_start, 0)
+            core_len   = max(end_pos - core_start, 0)
             buffer |> :binary.part(core_start, core_len) |> String.trim()
 
-          _ ->
-            case find_nth(buffer, @left, 2) do
-              {start_pos, start_len} ->
-                buffer
-                |> :binary.part(start_pos + start_len, byte_size(buffer) - start_pos - start_len)
-                |> String.trim()
+          {{start_pos, start_len}, _} ->
+            # 有左哨兵但没有右哨兵：取左哨兵之后的全部内容
+            buffer
+            |> :binary.part(start_pos + start_len, byte_size(buffer) - start_pos - start_len)
+            |> String.trim()
 
-              nil ->
-                buffer |> String.trim()
-            end
+          _ ->
+            buffer |> String.trim()
         end
 
       Cache.put(res_key, %{output: output, status: "complete"})
@@ -140,27 +139,24 @@ defmodule Eai.ResultCollector do
 
   # ── 超时提醒窗口（深度计数器，Cache 跨进程共享） ─────────────────────────
 
-  defp window_key(agent_id),    do: "agent:#{agent_id}:timeout_window"
-  defp interrupt_key(agent_id), do: "agent:#{agent_id}:interrupt_flag"
-
   @doc """
   触发超时提醒窗口：在 Cache 中写入超时深度。
   每次模型调用 get_task_result 时会消耗一层深度并返回提醒消息。
   """
-  def trigger_timeout_window(agent_id, depth \\ 1) do
-    Cache.put(window_key(agent_id), depth)
-    Logger.info("Timeout window triggered for #{agent_id}, depth: #{depth} (cache)")
+  def trigger_timeout_window(pty_session_id, depth \\ 1) do
+    Cache.put(window_key(pty_session_id), depth)
+    Logger.info("Timeout window triggered for #{pty_session_id}, depth: #{depth} (cache)")
   end
 
   @doc """
   检查当前超时窗口深度。如果 >0，消耗一层并返回提醒消息；否则清除并返回 nil。
   """
-  def check_timeout_window(agent_id) do
-    key = window_key(agent_id)
+  def check_timeout_window(pty_session_id) do
+    key = window_key(pty_session_id)
     case Cache.get(key) do
       depth when is_integer(depth) and depth > 0 ->
         Cache.put(key, depth - 1)
-        Logger.info("Timeout window consumed for #{agent_id}, remaining: #{depth - 1}")
+        Logger.info("Timeout window consumed for #{pty_session_id}, remaining: #{depth - 1}")
         "The timeout you set has been reached. Please safely stop what you're doing and reply now."
       _ ->
         Cache.delete(key)
@@ -171,45 +167,33 @@ defmodule Eai.ResultCollector do
   # ── 中断标记（强制中断，Cache） ──────────────────────────────────────────
 
   @doc "设置强制中断标记"
-  def set_interrupt_flag(agent_id) do
-    Cache.put(interrupt_key(agent_id), true)
-    Logger.info("Interrupt flag set for #{agent_id}")
+  def set_interrupt_flag(pty_session_id) do
+    Cache.put(interrupt_key(pty_session_id), true)
+    Logger.info("Interrupt flag set for #{pty_session_id}")
   end
 
   @doc "检查并清除中断标记，返回 true/false"
-  def check_and_clear_interrupt_flag(agent_id) do
-    key = interrupt_key(agent_id)
+  def check_and_clear_interrupt_flag(pty_session_id) do
+    key = interrupt_key(pty_session_id)
     case Cache.get(key) do
       true ->
         Cache.delete(key)
-        Logger.info("Interrupt flag consumed for #{agent_id}")
+        Logger.info("Interrupt flag consumed for #{pty_session_id}")
         true
       _ ->
         false
     end
   end
 
-  # ── 哨兵定位工具 ──────────────────────────────────────────────────────────
+  # ── 内部工具 ────────────────────────────────────────────────────────────────
 
-  defp find_nth(subject, pattern, nth) do
-    do_find_nth(subject, pattern, nth, 0)
-  end
-
-  defp do_find_nth(_subject, _pattern, 0, _offset), do: nil
-
-  defp do_find_nth(subject, pattern, n, offset) do
-    scope_start = offset
-    scope_size = byte_size(subject) - scope_start
-
-    case :binary.match(subject, pattern, scope: {scope_start, scope_size}) do
-      {pos, len} ->
-        if n == 1 do
-          {pos, len}
-        else
-          do_find_nth(subject, pattern, n - 1, pos + len)
-        end
-      :nomatch ->
-        nil
+  defp find_first(subject, pattern) do
+    case :binary.match(subject, pattern) do
+      {pos, len} -> {pos, len}
+      :nomatch   -> nil
     end
   end
+
+  defp window_key(pty_session_id),    do: "agent:#{pty_session_id}:timeout_window"
+  defp interrupt_key(pty_session_id), do: "agent:#{pty_session_id}:interrupt_flag"
 end

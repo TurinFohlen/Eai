@@ -1,11 +1,12 @@
 import Config
 
-# ── LLM ───────────────────────────────────────────────────────────────────────
-config :eai, :llm,
-  url:              "https://api.deepseek.com/chat/completions",
-  model:            "deepseek-v4-pro",
-  receive_timeout:  120_000,
-  reasoning_effort: "high"
+# ── 模型注册表（统一在 models.exs 管理）──────────────────────────────────────
+import_config "models.exs"
+
+# ── 兼容层：从注册表中取第一个模型作为全局 :llm 配置 ────────────────────────
+# （Eai.LLM.Direct 内部已通过 Eai.Models 查表，此段仅保留给可能直接读 :llm 的旧代码）
+# 如需覆盖单个字段，直接在此处追加即可：
+# config :eai, :llm, receive_timeout: 180_000
 
 # ── Sandbox ───────────────────────────────────────────────────────────────────
 config :eai, :sandbox,
@@ -19,7 +20,7 @@ config :eai, :sandbox,
   sentinel_left:      "___EAI_START___",
   sentinel_right:     "___EAI_END___",
   debug_pty_output:   false
-
+config :eai, :poll_cooldown_ms, 2_000   # 默认 2 秒
 # ── Telemetry ─────────────────────────────────────────────────────────────────
 config :eai, :telemetry_events, [
   {[:eai, :session, :spawn],       "PTY session spawned"},
@@ -36,7 +37,7 @@ config :eai, :telemetry_events, [
 ]
 
 # ── System Prompt ─────────────────────────────────────────────────────────────
-import_config "prompt.exs"
+import_config "prompts.exs"
 
 # ── 环境特定配置覆盖 ──────────────────────────────────────────────────────────
 import_config "#{config_env()}.exs"

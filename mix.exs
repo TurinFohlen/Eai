@@ -4,7 +4,7 @@ defmodule Eai.MixProject do
   def project do
     [
       app: :eai,
-      version: "0.1.5",
+      version: "0.1.7",
       elixir: "~> 1.19",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -25,7 +25,7 @@ defmodule Eai.MixProject do
       # HTTP client
       {:req, "~> 0.5"},
       {:finch, "~> 0.18"},
-      {:jason, "~> 1.4"},
+      {:jason, "~> 1.4.5"},
 
       # PTY execution
       {:expty, "~> 0.2"},

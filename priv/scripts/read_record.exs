@@ -7,7 +7,7 @@
 #
 #   不指定 --limit 则返回所有记录
 #   --json 输出 JSON 格式（供 Python / jq 等工具消费）
-
+Mix.install([:jason])
 defmodule ReadRecord do
   @moduledoc """
   读取 Eai.Record 写入的 gzip 压缩日志。
@@ -48,8 +48,7 @@ defmodule ReadRecord do
     if opts[:json] do
       records
       |> Enum.map(&sanitize_for_json/1)
-      |> Jason.encode!(pretty: true)
-      |> IO.puts()
+      |> IO.puts(Jason.encode!(data, pretty: true))
     else
       IO.puts("=== Found #{length(records)} record(s) ===\n")
       records

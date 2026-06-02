@@ -1,41 +1,21 @@
 import Config
 
-# OPENAI_API_KEY 必须在运行时注入；其余 LLM 参数可选覆盖
-if System.get_env("OPENAI_API_KEY") == nil do
-  raise """
-  环境变量 OPENAI_API_KEY 未设置。
-  请在启动前执行：
-    export OPENAI_API_KEY=sk-...
-  或在 .env 文件中配置后 source 该文件。
-  """
-end
+# API Key 校验已下放到模型层（Eai.Models.api_key/1），
+# 仅在实际发起请求时按模型的 api_key_env 字段按需读取，
+# 这样可以同时支持多个供应商（DeepSeek、OpenAI、Anthropic、Ollama 等），
+# 且未使用的供应商无需提前配置密钥。
 
-# 允许通过环境变量覆盖单个参数（可选）
-if url = System.get_env("EAI_LLM_URL") do
-  config :eai, :llm, url: url
-end
-
-if model = System.get_env("EAI_LLM_MODEL") do
-  config :eai, :llm, model: model
-end
-
-if timeout = System.get_env("EAI_LLM_TIMEOUT") do
-  config :eai, :llm, receive_timeout: String.to_integer(timeout)
-end
-
+# ── Sandbox 环境变量覆盖（可选）────────────────────────────────────
 if work_dir = System.get_env("EAI_WORK_DIR") do
   config :eai, :sandbox, work_dir_root: work_dir
 end
 
-# PTY 原始输出调试（默认关闭，生产环境建议保持 false）
 if debug_pty = System.get_env("EAI_DEBUG_PTY") do
   config :eai, :sandbox, debug_pty_output: debug_pty in ["1", "true", "yes"]
 end
 
-# priv 目录的源路径（用于 agent 工作目录软链接）
 if priv = System.get_env("EAI_PRIV_SRC") do
   config :eai, :sandbox, priv_src: priv
 else
-  # 默认推导：项目根目录下的 priv
   config :eai, :sandbox, priv_src: Path.expand("priv", File.cwd!())
 end
