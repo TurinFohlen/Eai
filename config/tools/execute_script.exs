@@ -29,7 +29,7 @@ defmodule Eai.Tool.ExecuteScript do
     path    = "#{prefix}#{task_id}.sh"
 
     with :ok <- File.write(path, script),
-         :ok <- Helpers.maybe_debug_script(path, script),
+         :ok <- debug_script(path, script),
          {:ok, ^task_id} <- Eai.Naming.pool().exec_async(sid, "bash #{path}; rm -f #{path}", task_id) do
       %{task_id: task_id, status: "queued"}
       |> Eai.Utils.sanitize_value()
@@ -40,5 +40,12 @@ defmodule Eai.Tool.ExecuteScript do
         |> Eai.Utils.sanitize_value()
         |> Jason.encode!()
     end
+  end
+
+  defp debug_script(path, script) do
+    if Helpers.sandbox_cfg(:debug_pty_output) do
+      IO.puts("\n=== SCRIPT START [#{path}] ===\n#{script}\n=== SCRIPT END ===")
+    end
+    :ok
   end
 end
