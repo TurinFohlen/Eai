@@ -21,58 +21,54 @@ defmodule Eai.Adapter.OpenAI do
     %{url: nil, headers: [], json_body: body}
   end
 
-  @impl true
-  def from_response(%{"choices" => [%{"message" => msg} | _]}) do
-    %{"role" => "assistant", "content" => content, "tool_calls" => tool_calls} = msg
-    blocks = []
+@impl true
+def from_response(%{"choices" => [%{"message" => msg} | _]}) do
+  content = msg["content"]
+  reasoning = msg["reasoning_content"]
+  tool_calls = msg["tool_calls"]
 
-    # Reasoning content (for deepseek/openai reasoning models)
-    reasoning = msg["reasoning_content"] || ""
+  blocks = []
 
-    blocks =
-      if reasoning != "" do
-        blocks ++ [{:text, reasoning}]
-      else
-        blocks
-      end
+  # 1. 思考内容 → :thinking 块（原样保留，便于 Anthropic 往返）
+  blocks =
+    if is_binary(reasoning) and reasoning != "" do
+      [{:thinking, reasoning} | blocks]
+    else
+      blocks
+    end
 
-    # Text content
-    blocks =
-      if is_binary(content) and content != "" and not is_nil(content) do
-        blocks ++ [{:text, content}]
-      else
-        blocks
-      end
+  # 2. 文本内容 → :text 块（可能为 nil）
+  blocks =
+    if is_binary(content) and content != "" do
+      [{:text, content} | blocks]
+    else
+      blocks
+    end
 
-    # Tool calls
-    blocks =
-      if is_list(tool_calls) and tool_calls != [] do
-        blocks ++ Enum.map(tool_calls, fn tc ->
-          args = case tc["function"]["arguments"] do
-            s when is_binary(s) -> Jason.decode!(s)
-            m when is_map(m) -> m
-            _ -> %{}
-          end
-          {:tool_use, [
-            tool_use_id: tc["id"],
-            name: tc["function"]["name"],
-            input: args
-          ]}
-        end)
-      else
-        blocks
-      end
+  # 3. 工具调用 → :tool_use 块
+  blocks =
+    if is_list(tool_calls) and tool_calls != [] do
+      Enum.map(tool_calls, fn tc ->
+        args = case tc["function"]["arguments"] do
+          s when is_binary(s) -> Jason.decode!(s)
+          m when is_map(m) -> m
+          _ -> %{}
+        end
+        {:tool_use, [
+          tool_use_id: tc["id"],
+          name: tc["function"]["name"],
+          input: args
+        ]}
+      end) ++ blocks
+    else
+      blocks
+    end
 
-    # Ensure we never return empty content — must have at least one text block
-    blocks =
-      if blocks == [] do
-        [{:text, ""}]
-      else
-        blocks
-      end
+  # 4. 确保至少有一个 :text 块（防止空 content 导致下游出错）
+  blocks = if blocks == [], do: [{:text, ""}], else: blocks
 
-    %{role: :assistant, content: blocks}
-  end
+  %{role: :assistant, content: Enum.reverse(blocks)}
+end
 
   @impl true
   def from_messages(raw_messages) when is_list(raw_messages) do
