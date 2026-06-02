@@ -4,6 +4,7 @@ defmodule Eai.Chat do
   alias Eai.LLM.Direct
   alias Eai.ResultCollector
   alias Eai.Utils
+  alias Eai.Message
 
   # ── 客户端 API ───────────────────────────────────────────────────
 
@@ -12,8 +13,8 @@ defmodule Eai.Chat do
   返回 {:ok, reply} 或 {:error, reason}。
 
   可选 opts:
-    pty_session_id:  "my_agent"   # PTY session ID（默认 "default"）
-    chat_session_id: "my_session" # Chat 历史 session ID（默认 "default"）
+    pty_session_id:  "my_agent"   # PTY session ID（默认 \"default\"）
+    chat_session_id: "my_session" # Chat 历史 session ID（默认 \"default\"）
     model:           :gpt4o
     prompt:          :coder
   """
@@ -23,7 +24,7 @@ defmodule Eai.Chat do
     model_opt       = Keyword.get(opts, :model)
     prompt_opt      = Keyword.get(opts, :prompt)
     run_opts        = build_run_opts(model_opt, prompt_opt, chat_session_id)
-    messages        = [%{role: "user", content: Utils.sanitize_value(message)}]
+    messages        = [Message.new(:user, Utils.sanitize_value(message))]
     case Direct.run(messages, pty_session_id, run_opts) do
       {:ok, reply, _history}     -> {:ok, reply}
       {:error, reason, _history} -> {:error, reason}
@@ -46,19 +47,19 @@ defmodule Eai.Chat do
       iex> Eai.Chat.talk(mod: :h, timeout: 10_000)
       iex> Eai.Chat.talk(model: :gpt4o)
       iex> Eai.Chat.talk(prompt: :coder)
-      iex> Eai.Chat.talk(chat_session: "work")
+      iex> Eai.Chat.talk(chat_session: \"work\")
 
   ## 单行消息模式（function / :f）
       同步等待回复，返回 {:ok, reply} 或 {:error, reason}。
 
-      iex> Eai.Chat.talk(content: "帮我查一下时间")
-      iex> Eai.Chat.talk(mod: :f, content: "查时间", timeout: 30_000)
-      iex> Eai.Chat.talk(content: "hi", model: :claude_sonnet, prompt: :analyst)
-      iex> Eai.Chat.talk(content: "继续", chat_session: "work")
+      iex> Eai.Chat.talk(content: \"帮我查一下时间\")
+      iex> Eai.Chat.talk(mod: :f, content: \"查时间\", timeout: 30_000)
+      iex> Eai.Chat.talk(content: \"hi\", model: :claude_sonnet, prompt: :analyst)
+      iex> Eai.Chat.talk(content: \"继续\", chat_session: \"work\")
 
   ## model / prompt / chat_session 参数
       model / prompt 传 models.exs / prompts.exs 中定义的 :name atom。
-      chat_session 传字符串，省略时使用 "default" 会话。
+      chat_session 传字符串，省略时使用 \"default\" 会话。
 
       iex> Eai.Models.names()         # 查看所有可用模型
       iex> Eai.Prompts.list()         # 查看所有可用 prompt
@@ -125,10 +126,14 @@ defmodule Eai.Chat do
 
   @doc """
   从 Record 兼容的 gzip 文件加载消息列表，替换指定会话的对话历史。
-  由 LLM 工具 `replace_context` 或用户手动调用。
+
+  format 参数:
+    \"converse\" (默认) — 消息已是 Eai.Message IR 格式
+    \"openai\"         — 消息为 OpenAI 格式，需要适配器转换
+    \"anthropic\"      — 消息为 Anthropic 格式，需要适配器转换
   """
-  def replace_history(file_path, chat_session \\ "default") do
-    GenServer.call(Eai.Naming.chat(), {:replace_history, file_path, to_string(chat_session)})
+  def replace_history(file_path, chat_session \\ "default", format \\ "converse") do
+    GenServer.call(Eai.Naming.chat(), {:replace_history, file_path, to_string(chat_session), format})
   end
 
   # ── 私有：多行读取循环 ──────────────────────────────────────────
@@ -188,8 +193,8 @@ defmodule Eai.Chat do
       {:reply, {:error, :busy, "Another task is running in session '#{chat_session_id}'."}, state}
     else
       sanitized    = Utils.sanitize_value(text)
-      new_messages = session.messages ++ [%{role: "user", content: sanitized}]
-      # talk 模式下 pty_session_id 默认跟随 chat_session_id
+      user_msg     = Message.new(:user, sanitized)
+      new_messages = session.messages ++ [user_msg]
       pty_session_id = chat_session_id
       run_opts       = build_run_opts(model_opt, prompt_opt, chat_session_id)
 
@@ -214,7 +219,6 @@ defmodule Eai.Chat do
     if is_nil(session.task_ref) do
       {:reply, {:error, :no_task}, state}
     else
-      # talk 模式下 pty_session_id == chat_session_id
       ResultCollector.set_interrupt_flag(chat_session_id)
       {:reply, :ok, state}
     end
@@ -269,11 +273,13 @@ defmodule Eai.Chat do
   end
 
   @impl true
-  def handle_call({:replace_history, file_path, chat_session_id}, _from, state) do
+  def handle_call({:replace_history, file_path, chat_session_id, format}, _from, state) do
     result = try do
       compressed   = File.read!(file_path)
       decompressed = :zlib.gunzip(compressed)
-      {:ok, :erlang.binary_to_term(decompressed)}
+      raw          = :erlang.binary_to_term(decompressed)
+      messages     = convert_imported_messages(raw, format)
+      {:ok, messages}
     rescue
       e -> {:error, Exception.message(e)}
     end
@@ -291,7 +297,8 @@ defmodule Eai.Chat do
   def handle_cast({:talk_async, text, timeout, model_opt, prompt_opt, chat_session_id}, state) do
     session        = get_session(state, chat_session_id)
     sanitized      = Utils.sanitize_value(text)
-    new_messages   = session.messages ++ [%{role: "user", content: sanitized}]
+    user_msg       = Message.new(:user, sanitized)
+    new_messages   = session.messages ++ [user_msg]
     pty_session_id = chat_session_id
     run_opts       = build_run_opts(model_opt, prompt_opt, chat_session_id)
 
@@ -316,7 +323,7 @@ defmodule Eai.Chat do
   def handle_info({ref, result}, state) when is_reference(ref) do
     case Map.pop(state.ref_to_session, ref) do
       {nil, _} ->
-        # 旧 ref 或不属于此 GenServer 的 Task，忽略
+        # 非 ref 或不属于此 GenServer 的 Task，忽略
         {:noreply, state}
 
       {chat_session_id, new_ref_map} ->
@@ -325,7 +332,7 @@ defmodule Eai.Chat do
 
         {reply_to_caller, new_messages} = case result do
           {:ok, reply, full_history} ->
-            IO.puts("\n🎙️ Assistant [#{chat_session_id}]: #{reply}")
+            IO.puts("\n🧙‍♀️ Assistant [##{chat_session_id}]: #{reply}")
             {{:ok, reply}, full_history}
           {:error, reason, partial_history} ->
             {{:error, reason}, partial_history}
@@ -344,7 +351,6 @@ defmodule Eai.Chat do
   end
 
   # 任务崩溃：处理 :DOWN 消息
-  # 若 ref 已被 {ref, result} 清除（正常结束的 :normal DOWN），则直接忽略
   @impl true
   def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
     case Map.pop(state.ref_to_session, ref) do
@@ -385,7 +391,7 @@ defmodule Eai.Chat do
   @impl true
   def handle_info(_msg, state), do: {:noreply, state}
 
-  # ── 内部工具 ────────────────────────────────────────────────────
+  # ── 内部辅助函数 ─────────────────────────────────────────────────
 
   defp new_session,
     do: %{messages: [], from: nil, task_ref: nil, remind_timer: nil}
@@ -403,5 +409,24 @@ defmodule Eai.Chat do
     %{chat_session_id: chat_session_id}
     |> then(fn m -> if model_opt,  do: Map.put(m, :model,         model_opt),  else: m end)
     |> then(fn m -> if prompt_opt, do: Map.put(m, :system_prompt, prompt_opt), else: m end)
+  end
+
+  # Convert imported raw messages to Eai.Message IR based on format
+  defp convert_imported_messages(raw_messages, "converse") do
+    # Already in Converse/Eai.Message format (from erlang term)
+    raw_messages
+  end
+
+  defp convert_imported_messages(raw_messages, "openai") do
+    Eai.Adapter.OpenAI.from_messages(raw_messages)
+  end
+
+  defp convert_imported_messages(raw_messages, "anthropic") do
+    Eai.Adapter.Anthropic.from_messages(raw_messages)
+  end
+
+  defp convert_imported_messages(raw_messages, _unknown) do
+    # Default: assume converse format
+    raw_messages
   end
 end

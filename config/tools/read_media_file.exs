@@ -13,8 +13,14 @@ defmodule Eai.Tool.ReadMediaFile do
       content — the model is chosen independently of the current conversation model, so
       you can route vision tasks to the best available multimodal endpoint.
 
+      When inject is true, the file is NOT analyzed by a separate vision model.
+      Instead, the media is returned as Converse-format content blocks that can be
+      injected directly into the current conversation stream, allowing the main model
+      to "see" the image.
+
       Returns JSON with keys: ok, type, mime, file_size, metadata, base64, compression,
       and (if analyze_prompt was set) vision_analysis + vision_model.
+      When inject=true: returns type="multimodal_inject" with blocks array.
       """,
       parameters: %{type: "object",
         properties: %{
@@ -23,6 +29,7 @@ defmodule Eai.Tool.ReadMediaFile do
           video_frame_time: %{type: "number",  description: "For video: extract frame at this second. Default 0."},
           max_dimension:    %{type: "integer", description: "Resize longest edge to this px before encoding. Default 1024. Set 0 for original."},
           analyze_prompt:   %{type: "string",  description: "If set, send the extracted image to a vision model with this prompt and return the analysis."},
+          inject:           %{type: "boolean", description: "If true, return Converse content blocks for injection into conversation (no separate vision call)."},
           vision_model:     %{type: "string",  description: "Vision model to use when analyze_prompt is set. E.g. 'gpt-4o', 'claude-opus-4-6', 'llava'. Defaults to config :vision_model or 'gpt-4o'."},
           vision_api_key:   %{type: "string",  description: "Override API key for the vision model call."},
           vision_url:       %{type: "string",  description: "Override base API URL for the vision model (OpenAI-compatible or Anthropic)."}
@@ -53,12 +60,29 @@ defmodule Eai.Tool.ReadMediaFile do
         {output, 0} ->
           case Jason.decode(output) do
             {:ok, %{"ok" => true} = media} ->
-              case args["analyze_prompt"] do
-                nil ->
-                  Jason.encode!(media)
-                prompt ->
+              cond do
+                # ── Inject mode: return Converse blocks for conversation injection ──
+                truthy?(args["inject"]) ->
+                  format = extract_format(media["mime"])
+                  base64_data = media["base64"]
+
+                  blocks = [
+                    %{"text" => args["analyze_prompt"] || "请分析这个媒体文件"},
+                    %{"image" => %{
+                      "format" => format,
+                      "source" => %{"bytes" => base64_data}
+                    }}
+                  ]
+
+                  Jason.encode!(%{
+                    type: "multimodal_inject",
+                    blocks: blocks
+                  })
+
+                # ── Analyze mode: call separate vision model ──
+                not is_nil(args["analyze_prompt"]) ->
                   vision_result = call_vision_model(
-                    media["base64"], media["mime"], prompt,
+                    media["base64"], media["mime"], args["analyze_prompt"],
                     vision_model:   args["vision_model"],
                     vision_api_key: args["vision_api_key"],
                     vision_url:     args["vision_url"]
@@ -75,13 +99,30 @@ defmodule Eai.Tool.ReadMediaFile do
                       |> Map.put("vision_error", reason)
                       |> Jason.encode!()
                   end
+
+                # ── Plain mode: just return media metadata ──
+                true ->
+                  Jason.encode!(media)
               end
+
             {:ok, err_map} -> Jason.encode!(err_map)
             {:error, _} -> Jason.encode!(%{ok: false, reason: "invalid output from media_reader", raw: output})
           end
         {error, code} ->
           Jason.encode!(%{ok: false, reason: "media_reader exited #{code}: #{String.trim(error)}"})
       end
+    end
+  end
+
+  # ── Helpers ──────────────────────────────────────────────────────────
+
+  defp truthy?(val) when val in [true, "true", "1", 1], do: true
+  defp truthy?(_), do: false
+
+  defp extract_format(mime) do
+    case String.split(mime, "/") do
+      [_, fmt] -> fmt
+      _ -> "png"
     end
   end
 

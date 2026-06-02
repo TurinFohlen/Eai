@@ -2,15 +2,20 @@ defmodule Eai.Application do
   use Application
 
   def start(_type, _args) do
-    IO.puts("ℹ️  EAI started. Type Eai.help() for full documentation.\n")
     attach_telemetry()
 
-    children = [
-      {Phoenix.PubSub, name: Eai.Naming.pubsub()},
-      Eai.Cache.Cache,
-      Eai.Sandbox.PTYPool,
-      {Eai.Chat, []},
-    ]
+    children =
+      if Application.get_env(:eai, :start_application, true) do
+        IO.puts("ℹ️  EAI started. Type Eai.help() for full documentation.\n")
+        [
+          {Phoenix.PubSub, name: Eai.Naming.pubsub()},
+          Eai.Cache.Cache,
+          Eai.Sandbox.PTYPool,
+          {Eai.Chat, []},
+        ]
+      else
+        []
+      end
 
     opts = [strategy: :one_for_one, name: Eai.Supervisor]
     Supervisor.start_link(children, opts)

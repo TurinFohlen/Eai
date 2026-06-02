@@ -4,26 +4,28 @@ defmodule Eai.Tool.WriteToSession do
 
   @right_sentinel Application.compile_env(:eai, [:sandbox, :sentinel_right])
 
+  @description """
+  Write raw bytes directly to a PTY session's stdin, bypassing the sentinel wrapper.
+  Use for interactive input (e.g. answering [Y/n] prompts) or for sending control characters.
+  Do NOT use for normal script execution — use execute_script for that.
+
+  Supported escape sequences (write them literally in the input string):
+    \\\\n   newline
+    \\\\r   carriage return
+    \\\\t   tab
+    \\\\x03 Ctrl+C (interrupt running task)
+    \\\\x04 Ctrl+D (EOF)
+    \\\\x1a Ctrl+Z
+
+  **Example:** to interrupt a running task, send Ctrl+C then echo the right sentinel:
+    input: "\\\\x03\\\\necho #{@right_sentinel}\\\\n"
+  """
+
   @impl true
   def schema do
     %{type: "function", function: %{
       name: "write_to_session",
-      description: """
-      Write raw bytes directly to a PTY session's stdin, bypassing the sentinel wrapper.
-      Use for interactive input (e.g. answering [Y/n] prompts) or for sending control characters.
-      Do NOT use for normal script execution — use execute_script for that.
-
-      Supported escape sequences (write them literally in the input string):
-        \\\\n   newline
-        \\\\r   carriage return
-        \\\\t   tab
-        \\\\x03 Ctrl+C (interrupt running task)
-        \\\\x04 Ctrl+D (EOF)
-        \\\\x1a Ctrl+Z
-
-      **Example:** to interrupt a running task, send Ctrl+C then echo the right sentinel:
-        input: "\\\\x03\\\\necho \#{@right_sentinel}\\\\n"
-      """,
+      description: @description,
       parameters: %{type: "object",
         properties: %{
           input:          %{type: "string", description: "String to write, using escape sequences for control chars (e.g. \"y\\\\n\", \"\\\\x03\\\\n\")."},

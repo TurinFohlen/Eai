@@ -10,7 +10,7 @@ defmodule Eai.Utils do
 
   @doc """
   递归清洗任意嵌套结构，保证所有二进制字段都是合法 UTF-8 字符串。
-  无效字节会被替换为 "BASE64_DATA:" <> base64 编码。
+  无效字节会被替换为 \"BASE64_DATA:\" <> base64 编码。
 
   支持的类型：
   - `binary`  — 检查 UTF-8 合法性，非法则 base64 编码
@@ -22,16 +22,16 @@ defmodule Eai.Utils do
   ## 示例
 
       iex> Eai.Utils.sanitize_value("hello")
-      "hello"
+      \"hello\"
 
       iex> Eai.Utils.sanitize_value(<<0xFF, 0xFE>>)
-      "BASE64_DATA://w=="
+      \"BASE64_DATA://w==\"
 
-      iex> Eai.Utils.sanitize_value(%{"key" => <<0xFF>>})
-      %{"key" => "BASE64_DATA:/w=="}
+      iex> Eai.Utils.sanitize_value(%{\"key\" => <<0xFF>>})
+      %{\"key\" => \"BASE64_DATA:/w==\"}
 
-      iex> Eai.Utils.sanitize_value([1, "ok", <<0xFE>>])
-      [1, "ok", "BASE64_DATA:/g=="]
+      iex> Eai.Utils.sanitize_value([1, \"ok\", <<0xFE>>])
+      [1, \"ok\", \"BASE64_DATA:/g==\"]
 
   """
   @spec sanitize_value(term()) :: term()
@@ -51,6 +51,19 @@ defmodule Eai.Utils do
     Map.new(map, fn {k, v} -> {sanitize_value(k), sanitize_value(v)} end)
   end
 
+  # Handle content block tuples from Eai.Message IR:
+  # {:text, string}
+  # {:image, [format: fmt, source: {:bytes, data}]}
+  # {:tool_use, [tool_use_id: id, name: name, input: map]}
+  # {:tool_result, [tool_use_id: id, content: [blocks]]}
+  def sanitize_value({tag, payload}) when is_atom(tag) and tag in [:text, :image, :tool_use, :tool_result] do
+    {tag, sanitize_value(payload)}
+  end
+
+  def sanitize_value({tag, a, b}) when is_atom(tag) do
+    {tag, sanitize_value(a), sanitize_value(b)}
+  end
+
   def sanitize_value(tuple) when is_tuple(tuple) do
     tuple
     |> Tuple.to_list()
@@ -62,6 +75,8 @@ defmodule Eai.Utils do
 
   @doc """
   对整个消息列表（LLM history）做批量清洗，适合在入口/出口统一调用。
+
+  支持 Eai.Message IR 格式（%{role: atom, content: [tuples]}）和旧版 map 格式。
 
   ## 示例
 

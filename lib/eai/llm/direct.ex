@@ -1,10 +1,14 @@
 defmodule Eai.LLM.Direct do
   @moduledoc """
-  Direct LLM API orchestration — assembles requests, routes tool calls,
-  and delegates execution to tool modules discovered in config/tools/.
+  Direct LLM API orchestration using Converse-based internal message IR.
+
+  All internal history is [Eai.Message.t()]. Before sending to an LLM provider,
+  the appropriate adapter converts messages to provider-specific wire format.
+  Responses are parsed back into Eai.Message.t().
   """
   @tools_dir Path.expand("config/tools", File.cwd!())
 
+  alias Eai.Message
 
   # ── Tool registry (lazy-loaded on first run) ─────────────────────────
 
@@ -43,29 +47,41 @@ defmodule Eai.LLM.Direct do
   def run(messages, pty_session_id \\ "default", opts \\ %{}) do
     entry           = resolve_model_entry(opts)
     chat_session_id = Map.get(opts, :chat_session_id, "default") |> to_string()
+    provider        = Map.get(opts, :provider, entry[:provider] || :openai_compat)
+    adapter         = adapter_for(provider)
 
-    api_key  = Map.get(opts, :api_key,         Eai.Models.api_key(entry))
-    model    = Map.get(opts, :model_str,       entry[:model])
-    url      = Map.get(opts, :url,             entry[:url])
+    api_key  = Map.get(opts, :api_key, Eai.Models.api_key(entry))
+    model    = Map.get(opts, :model_str, entry[:model])
+    url      = Map.get(opts, :url, entry[:url])
     timeout  = Map.get(opts, :receive_timeout, entry[:receive_timeout] || 120_000)
     effort   = Map.get(opts, :reasoning_effort, entry[:reasoning_effort])
-    provider = Map.get(opts, :provider,        entry[:provider] || :openai_compat)
     prompt   = resolve_prompt(Map.get(opts, :system_prompt))
 
-    formatted =
-      messages
-      |> Enum.map(&format_message/1)
-      |> Eai.Utils.sanitize_messages()
-
     %{schemas: schemas} = tools()
-    body = build_request_body(model, prompt, formatted, effort, provider, schemas)
+
+    # Convert internal messages to provider wire format
+    adapter_opts = [reasoning_effort: effort]
+    req = adapter.to_request_body(messages, model, prompt, schemas, adapter_opts)
+
+    # Use model-configured URL if adapter didn't set one
+    req_url = if is_nil(req.url), do: url, else: req.url
+
+    # Build headers
+    headers = if req.headers == [] do
+      case provider do
+        :anthropic -> [{"x-api-key", api_key || ""}, {"anthropic-version", "2023-06-01"}, {"content-type", "application/json"}]
+        _ -> [authorization: "Bearer #{api_key || ""}"]
+      end
+    else
+      req.headers
+    end
 
     start_time = System.monotonic_time(:millisecond)
     :telemetry.execute([:eai, :llm, :request, :start], %{system_time: System.system_time()}, %{pty_session_id: pty_session_id})
 
-    result = Req.post(url,
-      json: body,
-      headers: build_headers(provider, api_key),
+    result = Req.post(req_url,
+      json: req.json_body,
+      headers: headers,
       receive_timeout: timeout
     )
 
@@ -74,8 +90,8 @@ defmodule Eai.LLM.Direct do
     case result do
       {:ok, %{status: 200, body: resp_body}} ->
         :telemetry.execute([:eai, :llm, :request, :stop], %{duration_ms: duration}, %{pty_session_id: pty_session_id, status: :ok})
-        msg = extract_message(resp_body, provider)
-        handle_response(msg, messages, pty_session_id, chat_session_id, opts)
+        assistant_msg = adapter.from_response(resp_body)
+        handle_response(assistant_msg, messages, pty_session_id, chat_session_id, opts)
 
       {:ok, %{status: status, body: body}} ->
         :telemetry.execute([:eai, :llm, :request, :stop], %{duration_ms: duration}, %{pty_session_id: pty_session_id, status: :error})
@@ -89,116 +105,39 @@ defmodule Eai.LLM.Direct do
     end
   end
 
-  # ── Model / prompt resolution ────────────────────────────────────────
-
-  defp resolve_model_entry(%{model: name}) when is_atom(name), do: Eai.Models.get!(name)
-  defp resolve_model_entry(_opts),                             do: Eai.Models.default()
-
-  defp resolve_prompt(nil),                    do: Eai.Prompts.default()[:content]
-  defp resolve_prompt(name) when is_atom(name), do: Eai.Prompts.get!(name)[:content]
-  defp resolve_prompt(text) when is_binary(text), do: text
-
-  # ── Provider-specific request building ───────────────────────────────
-
-  defp build_request_body(model, prompt, formatted, effort, :anthropic, schemas) do
-    # system as content-block list with cache breakpoint — cached at write (+25%),
-    # subsequent reads hit cache (-90% cost).  ephemeral TTL = 5 min.
-    system = [%{type: "text", text: prompt, cache_control: %{type: "ephemeral"}}]
-
-    anthropic_tools = to_anthropic_tools(schemas)
-
-    # Pin cache_control on the last tool so system + all tools sit inside the
-    # cached prefix.  No tools → system prompt alone is still cached.
-    tools =
-      case List.pop_at(anthropic_tools, -1) do
-        {last, rest} when not is_nil(last) ->
-          rest ++ [Map.put(last, :cache_control, %{type: "ephemeral"})]
-        _ ->
-          anthropic_tools
-      end
-
-    body = %{
-      model:      model,
-      max_tokens: 8192,
-      system:     system,
-      messages:   formatted,
-      tools:      tools
-    }
-    if effort, do: Map.put(body, :thinking, %{type: "enabled", budget_tokens: 5000}), else: body
-  end
-
-  defp build_request_body(model, prompt, formatted, effort, _openai_compat, schemas) do
-    body = %{
-      model:       model,
-      messages:    [%{role: "system", content: prompt} | formatted],
-      tools:       schemas,
-      tool_choice: "auto",
-      stream:      false
-    }
-    body
-    |> then(fn b -> if effort, do: Map.merge(b, %{thinking: %{type: "enabled"}, reasoning_effort: effort}), else: b end)
-  end
-
-  defp to_anthropic_tools(tools) do
-    Enum.map(tools, fn %{function: %{name: name, description: desc, parameters: params}} ->
-      %{name: name, description: desc, input_schema: params}
-    end)
-  end
-
-  defp build_headers(:anthropic, api_key) do
-    [{"x-api-key", api_key || ""}, {"anthropic-version", "2023-06-01"}, {"content-type", "application/json"}]
-  end
-  defp build_headers(_openai_compat, api_key) do
-    [authorization: "Bearer #{api_key || ""}"]
-  end
-
-  # ── Response extraction ──────────────────────────────────────────────
-
-  defp extract_message(%{"stop_reason" => "tool_use", "content" => blocks}, :anthropic) do
-    tool_uses = Enum.filter(blocks, &(&1["type"] == "tool_use"))
-    %{
-      "content" => nil,
-      "tool_calls" => Enum.map(tool_uses, fn tu ->
-        %{
-          "id" => tu["id"],
-          "type" => "function",
-          "function" => %{"name" => tu["name"], "arguments" => Jason.encode!(tu["input"])}
-        }
-      end)
-    }
-  end
-
-  defp extract_message(%{"choices" => [%{"message" => msg} | _]}, _provider),     do: msg
-  defp extract_message(%{"content" => [%{"type" => "text", "text" => t} | _]}, _), do: %{"content" => t}
-  defp extract_message(%{"content" => content}, _) when is_binary(content),        do: %{"content" => content}
-  defp extract_message(body, _), do: raise("unexpected response shape: #{inspect(body)}")
-
-  # ── Message formatting ────────────────────────────────────────────────
-
-  defp format_message(%{role: "assistant"} = msg) do
-    base = %{
-      "role" => "assistant",
-      "content" => msg["content"] || "",
-      "reasoning_content" => msg["reasoning_content"] || ""
-    }
-    if msg["tool_calls"], do: Map.put(base, "tool_calls", msg["tool_calls"]), else: base
-  end
-  defp format_message(msg), do: msg
-
   # ── Response routing ─────────────────────────────────────────────────
 
-  defp handle_response(%{"tool_calls" => tool_calls} = assistant, history, pty_session_id, chat_session_id, opts) do
-    %{dispatch: dispatch} = tools()
+  defp handle_response(assistant_msg, history, pty_session_id, chat_session_id, opts) do
+    history = history ++ [assistant_msg]
 
-    results =
-      Enum.map(tool_calls, fn tc ->
-        name = tc["function"]["name"]
-        args = decode_args(tc["function"]["arguments"]) |> Eai.Utils.sanitize_value()
+    cond do
+      # Has tool_use blocks → execute tools and recurse
+      Message.has_tool_uses?(assistant_msg) ->
+        handle_tool_calls(assistant_msg, history, pty_session_id, chat_session_id, opts)
+
+      # Pure text response → done
+      true ->
+        text = Message.text(assistant_msg)
+        {:ok, Eai.Utils.sanitize_value(text), history}
+    end
+  end
+
+  # ── Tool execution loop ──────────────────────────────────────────────
+
+  defp handle_tool_calls(assistant_msg, history, pty_session_id, chat_session_id, opts) do
+    %{dispatch: dispatch} = tools()
+    tool_uses = Message.tool_uses(assistant_msg)
+
+    {new_user_messages, should_continue?} =
+      Enum.reduce(tool_uses, {[], true}, fn tu, {msgs_acc, cont} ->
+        name = tu[:name]
+        args = Eai.Utils.sanitize_value(tu[:input])
+        tool_use_id = tu[:tool_use_id]
 
         :telemetry.execute([:eai, :tool, :execute], %{system_time: System.system_time()},
           %{tool: name, pty_session_id: pty_session_id})
 
-        content =
+        content_json =
           try do
             case Map.fetch(dispatch, name) do
               {:ok, mod} -> mod.execute(args, pty_session_id, chat_session_id)
@@ -211,29 +150,51 @@ defmodule Eai.LLM.Direct do
               Jason.encode!(%{error: Exception.message(e)})
           end
 
-        %{role: "tool", tool_call_id: tc["id"], content: content}
-      end)
+        # Check for multimodal_inject
+        case Jason.decode(content_json) do
+          {:ok, %{"type" => "multimodal_inject", "blocks" => blocks}} ->
+            # Convert inject blocks to a new :user message, continue loop
+            inject_msg = Message.from_inject_blocks(blocks)
+            {[inject_msg | msgs_acc], cont}
 
-    assistant_msg =
-      %{"role" => "assistant", "content" => assistant["content"] || "", "tool_calls" => tool_calls}
-      |> then(fn m ->
-        case assistant["reasoning_content"] do
-          rc when is_binary(rc) -> Map.put(m, "reasoning_content", rc)
-          _                     -> m
+          {:ok, _} ->
+            # Normal tool result
+            result_content = [{:text, content_json}]
+            tool_msg = Message.new_tool_result(tool_use_id, result_content)
+            {[tool_msg | msgs_acc], cont}
+
+          {:error, _} ->
+            result_content = [{:text, content_json}]
+            tool_msg = Message.new_tool_result(tool_use_id, result_content)
+            {[tool_msg | msgs_acc], cont}
         end
       end)
 
-    run(history ++ [assistant_msg] ++ results, pty_session_id, opts)
+    # Reverse because we prepended
+    new_user_messages = Enum.reverse(new_user_messages)
+
+    if should_continue? do
+      run(history ++ new_user_messages, pty_session_id, opts)
+    else
+      # Shouldn't happen, but fallback
+      text = Message.text(assistant_msg)
+      {:ok, Eai.Utils.sanitize_value(text), history}
+    end
   end
 
-  defp handle_response(%{"content" => content}, history, _pty_session_id, _chat_session_id, _opts) do
-    final_msg = %{"role" => "assistant", "content" => Eai.Utils.sanitize_value(content)}
-    {:ok, Eai.Utils.sanitize_value(content), history ++ [final_msg]}
-  end
+  # ── Model / prompt resolution ────────────────────────────────────────
 
-  # ── Utilities ────────────────────────────────────────────────────────
+  defp resolve_model_entry(%{model: name}) when is_atom(name), do: Eai.Models.get!(name)
+  defp resolve_model_entry(_opts),                             do: Eai.Models.default()
 
-  defp decode_args(nil), do: %{}
-  defp decode_args(""),  do: %{}
-  defp decode_args(s),   do: Jason.decode!(s)
+  defp resolve_prompt(nil),                    do: Eai.Prompts.default()[:content]
+  defp resolve_prompt(name) when is_atom(name), do: Eai.Prompts.get!(name)[:content]
+  defp resolve_prompt(text) when is_binary(text), do: text
+
+  # ── Adapter dispatch ─────────────────────────────────────────────────
+
+  defp adapter_for(:anthropic),     do: Eai.Adapter.Anthropic
+  defp adapter_for(:openai_compat), do: Eai.Adapter.OpenAI
+  defp adapter_for(:converse),      do: Eai.Adapter.Converse
+  defp adapter_for(_),              do: Eai.Adapter.OpenAI
 end

@@ -9,8 +9,8 @@ defmodule Eai.ResultCollector do
   alias Eai.Cache.Cache
   require Logger
 
-  @left  Application.compile_env(:eai, [:sandbox, :sentinel_left], "___EAI_START___")
-  @right Application.compile_env(:eai, [:sandbox, :sentinel_right], "___EAI_END___")
+  @left  Application.compile_env(:eai, [:sandbox, :sentinel_left])
+  @right Application.compile_env(:eai, [:sandbox, :sentinel_right])
 
   defp sandbox_cfg(key), do: Application.fetch_env!(:eai, :sandbox) |> Keyword.fetch!(key)
 
