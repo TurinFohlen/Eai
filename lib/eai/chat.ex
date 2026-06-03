@@ -9,6 +9,7 @@ defmodule Eai.Chat do
   alias Eai.Message
   alias Eai.ResultCollector
   alias Eai.Utils
+
   # ── 客户端 API ───────────────────────────────────────────────────
 
   @doc """
@@ -22,14 +23,15 @@ defmodule Eai.Chat do
     prompt:          :coder
   """
   def send(message, opts \\ []) do
-    pty_session_id  = Keyword.get(opts, :pty_session_id,  "default")
+    pty_session_id = Keyword.get(opts, :pty_session_id, "default")
     chat_session_id = Keyword.get(opts, :chat_session_id, "default") |> to_string()
-    model_opt       = Keyword.get(opts, :model)
-    prompt_opt      = Keyword.get(opts, :prompt)
-    run_opts        = build_run_opts(model_opt, prompt_opt, chat_session_id)
-    messages        = [Message.new(:user, Utils.sanitize_value(message))]
+    model_opt = Keyword.get(opts, :model)
+    prompt_opt = Keyword.get(opts, :prompt)
+    run_opts = build_run_opts(model_opt, prompt_opt, chat_session_id)
+    messages = [Message.new(:user, Utils.sanitize_value(message))]
+
     case Direct.run(messages, pty_session_id, run_opts) do
-      {:ok, reply, _history}     -> {:ok, reply}
+      {:ok, reply, _history} -> {:ok, reply}
       {:error, reason, _history} -> {:error, reason}
     end
   end
@@ -69,30 +71,44 @@ defmodule Eai.Chat do
       iex> Eai.Chat.list_chat_sessions()  # 查看所有会话
   """
   def talk(opts \\ []) do
-    timeout      = Keyword.get(opts, :timeout, :infinity)
-    mode         = Keyword.get(opts, :mod, :human)
-    content      = Keyword.get(opts, :content)
-    model_opt    = Keyword.get(opts, :model)
-    prompt_opt   = Keyword.get(opts, :prompt)
+    timeout = Keyword.get(opts, :timeout, :infinity)
+    mode = Keyword.get(opts, :mod, :human)
+    content = Keyword.get(opts, :content)
+    model_opt = Keyword.get(opts, :model)
+    prompt_opt = Keyword.get(opts, :prompt)
     chat_session = opts |> Keyword.get(:chat_session, "default") |> to_string()
 
     case {mode, content} do
       {m, nil} when m in [:h, :human] ->
         case GenServer.call(Eai.Naming.chat(), {:status, chat_session}) do
           :busy ->
-            IO.puts("A task is already running in session '#{chat_session}'. Please wait or interrupt it first.")
+            IO.puts(
+              "A task is already running in session '#{chat_session}'. Please wait or interrupt it first."
+            )
+
             {:error, :busy}
+
           _ ->
-            IO.puts("EAI Chat [#{chat_session}]. Type '/s' on a new line to send your message. Type '/c' on a new line to cancel")
+            IO.puts(
+              "EAI Chat [#{chat_session}]. Type '/s' on a new line to send your message. Type '/c' on a new line to cancel"
+            )
+
             read_lines(timeout, model_opt, prompt_opt, chat_session, [])
             :ok
         end
 
       {m, msg} when not is_nil(msg) and m in [:f, :function, :h, :human] ->
-        GenServer.call(Eai.Naming.chat(), {:talk, msg, timeout, model_opt, prompt_opt, chat_session}, :infinity)
+        GenServer.call(
+          Eai.Naming.chat(),
+          {:talk, msg, timeout, model_opt, prompt_opt, chat_session},
+          :infinity
+        )
 
       {m, _} ->
-        IO.puts("Invalid mod: #{inspect(m)}. Use :h/:human (interactive) or :f/:function (single-line with content).")
+        IO.puts(
+          "Invalid mod: #{inspect(m)}. Use :h/:human (interactive) or :f/:function (single-line with content)."
+        )
+
         {:error, :invalid_mod}
     end
   end
@@ -136,7 +152,10 @@ defmodule Eai.Chat do
     \"anthropic\"      — 消息为 Anthropic 格式，需要适配器转换
   """
   def replace_history(file_path, chat_session \\ "default", format \\ "converse") do
-    GenServer.call(Eai.Naming.chat(), {:replace_history, file_path, to_string(chat_session), format})
+    GenServer.call(
+      Eai.Naming.chat(),
+      {:replace_history, file_path, to_string(chat_session), format}
+    )
   end
 
   # ── 私有：多行读取循环 ──────────────────────────────────────────
@@ -171,7 +190,11 @@ defmodule Eai.Chat do
       IO.puts("No message to send. Starting over.")
       read_lines(timeout, model_opt, prompt_opt, chat_session, [])
     else
-      GenServer.cast(Eai.Naming.chat(), {:talk_async, message, timeout, model_opt, prompt_opt, chat_session})
+      GenServer.cast(
+        Eai.Naming.chat(),
+        {:talk_async, message, timeout, model_opt, prompt_opt, chat_session}
+      )
+
       IO.puts("Task submitted. Use Eai.Chat.interrupt!(\"#{chat_session}\") to stop it.")
     end
   end
@@ -180,27 +203,29 @@ defmodule Eai.Chat do
 
   @impl true
   def init(_) do
-    {:ok, %{
-      sessions:       %{"default" => new_session()},
-      ref_to_session: %{}
-    }}
+    {:ok,
+     %{
+       sessions: %{"default" => new_session()},
+       ref_to_session: %{}
+     }}
   end
 
   @impl true
   def handle_call({:status, chat_session_id}, _from, state) do
     session = get_session(state, chat_session_id)
-    {:reply, (if is_nil(session.task_ref), do: :idle, else: :busy), state}
+    {:reply, if(is_nil(session.task_ref), do: :idle, else: :busy), state}
   end
 
   @impl true
   def handle_call({:talk, text, timeout, model_opt, prompt_opt, chat_session_id}, from, state) do
     session = get_session(state, chat_session_id)
+
     if is_nil(session.task_ref) do
-      sanitized    = Utils.sanitize_value(text)
-      user_msg     = Message.new(:user, sanitized)
+      sanitized = Utils.sanitize_value(text)
+      user_msg = Message.new(:user, sanitized)
       new_messages = session.messages ++ [user_msg]
       pty_session_id = chat_session_id
-      run_opts       = build_run_opts(model_opt, prompt_opt, chat_session_id)
+      run_opts = build_run_opts(model_opt, prompt_opt, chat_session_id)
 
       task = Task.async(fn -> Direct.run(new_messages, pty_session_id, run_opts) end)
       Process.unlink(task.pid)
@@ -210,8 +235,16 @@ defmodule Eai.Chat do
           Process.send_after(self(), {:remind_model, pty_session_id, chat_session_id}, timeout)
         end
 
-      new_session = %{session | messages: new_messages, from: from, task_ref: task.ref, remind_timer: remind_timer}
-      new_state   = state |> put_session(chat_session_id, new_session) |> put_ref(task.ref, chat_session_id)
+      new_session = %{
+        session
+        | messages: new_messages,
+          from: from,
+          task_ref: task.ref,
+          remind_timer: remind_timer
+      }
+
+      new_state =
+        state |> put_session(chat_session_id, new_session) |> put_ref(task.ref, chat_session_id)
 
       {:noreply, new_state}
     else
@@ -222,6 +255,7 @@ defmodule Eai.Chat do
   @impl true
   def handle_call({:interrupt!, chat_session_id}, _from, state) do
     session = get_session(state, chat_session_id)
+
     if is_nil(session.task_ref) do
       {:reply, {:error, :no_task}, state}
     else
@@ -237,12 +271,15 @@ defmodule Eai.Chat do
 
   @impl true
   def handle_call(:list_chat_sessions, _from, state) do
-    result = Map.new(state.sessions, fn {id, session} ->
-      {id, %{
-        message_count: length(session.messages),
-        status:        (if is_nil(session.task_ref), do: "idle", else: "busy")
-      }}
-    end)
+    result =
+      Map.new(state.sessions, fn {id, session} ->
+        {id,
+         %{
+           message_count: length(session.messages),
+           status: if(is_nil(session.task_ref), do: "idle", else: "busy")
+         }}
+      end)
+
     {:reply, result, state}
   end
 
@@ -256,8 +293,10 @@ defmodule Eai.Chat do
     case Map.fetch(state.sessions, name) do
       :error ->
         {:reply, {:error, :not_found}, state}
+
       {:ok, session} when not is_nil(session.task_ref) ->
         {:reply, {:error, :session_busy}, state}
+
       {:ok, _session} ->
         {:reply, :ok, %{state | sessions: Map.delete(state.sessions, name)}}
     end
@@ -266,34 +305,39 @@ defmodule Eai.Chat do
   @impl true
   def handle_call({:export_history, file_path, chat_session_id}, _from, state) do
     session = get_session(state, chat_session_id)
-    result  = try do
-      File.mkdir_p!(Path.dirname(file_path))
-      sanitized  = Utils.sanitize_messages(session.messages)
-      compressed = :zlib.gzip(:erlang.term_to_binary(sanitized))
-      File.write!(file_path, compressed)
-      {:ok, file_path}
-    rescue
-      e -> {:error, Exception.message(e)}
-    end
+
+    result =
+      try do
+        File.mkdir_p!(Path.dirname(file_path))
+        sanitized = Utils.sanitize_messages(session.messages)
+        compressed = :zlib.gzip(:erlang.term_to_binary(sanitized))
+        File.write!(file_path, compressed)
+        {:ok, file_path}
+      rescue
+        e -> {:error, Exception.message(e)}
+      end
+
     {:reply, result, state}
   end
 
   @impl true
   def handle_call({:replace_history, file_path, chat_session_id, format}, _from, state) do
-    result = try do
-      compressed   = File.read!(file_path)
-      decompressed = :zlib.gunzip(compressed)
-      raw          = :erlang.binary_to_term(decompressed)
-      messages     = convert_imported_messages(raw, format)
-      {:ok, messages}
-    rescue
-      e -> {:error, Exception.message(e)}
-    end
+    result =
+      try do
+        compressed = File.read!(file_path)
+        decompressed = :zlib.gunzip(compressed)
+        raw = :erlang.binary_to_term(decompressed)
+        messages = convert_imported_messages(raw, format)
+        {:ok, messages}
+      rescue
+        e -> {:error, Exception.message(e)}
+      end
 
     case result do
       {:ok, messages} ->
         new_session = %{get_session(state, chat_session_id) | messages: messages}
         {:reply, {:ok, length(messages)}, put_session(state, chat_session_id, new_session)}
+
       {:error, reason} ->
         {:reply, {:error, reason}, state}
     end
@@ -301,12 +345,12 @@ defmodule Eai.Chat do
 
   @impl true
   def handle_cast({:talk_async, text, timeout, model_opt, prompt_opt, chat_session_id}, state) do
-    session        = get_session(state, chat_session_id)
-    sanitized      = Utils.sanitize_value(text)
-    user_msg       = Message.new(:user, sanitized)
-    new_messages   = session.messages ++ [user_msg]
+    session = get_session(state, chat_session_id)
+    sanitized = Utils.sanitize_value(text)
+    user_msg = Message.new(:user, sanitized)
+    new_messages = session.messages ++ [user_msg]
     pty_session_id = chat_session_id
-    run_opts       = build_run_opts(model_opt, prompt_opt, chat_session_id)
+    run_opts = build_run_opts(model_opt, prompt_opt, chat_session_id)
 
     task = Task.async(fn -> Direct.run(new_messages, pty_session_id, run_opts) end)
     Process.unlink(task.pid)
@@ -316,8 +360,16 @@ defmodule Eai.Chat do
         Process.send_after(self(), {:remind_model, pty_session_id, chat_session_id}, timeout)
       end
 
-    new_session = %{session | messages: new_messages, task_ref: task.ref, remind_timer: remind_timer, from: nil}
-    new_state   = state |> put_session(chat_session_id, new_session) |> put_ref(task.ref, chat_session_id)
+    new_session = %{
+      session
+      | messages: new_messages,
+        task_ref: task.ref,
+        remind_timer: remind_timer,
+        from: nil
+    }
+
+    new_state =
+      state |> put_session(chat_session_id, new_session) |> put_ref(task.ref, chat_session_id)
 
     {:noreply, new_state}
   end
@@ -336,21 +388,35 @@ defmodule Eai.Chat do
         session = get_session(state, chat_session_id)
         if session.remind_timer, do: Process.cancel_timer(session.remind_timer)
 
-        {reply_to_caller, new_messages} = case result do
-          {:ok, reply, full_history} ->
-            IO.puts("\n🧙‍♀️ Assistant [##{chat_session_id}]: #{reply}")
-            {{:ok, reply}, full_history}
-          {:error, reason, partial_history} ->
-            {{:error, reason}, partial_history}
-        end
+        {reply_to_caller, new_messages} =
+          case result do
+            {:ok, reply, full_history} ->
+              IO.puts("\n🧙‍♀️ Assistant [##{chat_session_id}]: #{reply}")
+              {{:ok, reply}, full_history}
 
-        Phoenix.PubSub.broadcast(Eai.Naming.pubsub(), "chat_updates:#{chat_session_id}", {:new_message, new_messages})
+            {:error, reason, partial_history} ->
+              {{:error, reason}, partial_history}
+          end
+
+        Phoenix.PubSub.broadcast(
+          Eai.Naming.pubsub(),
+          "chat_updates:#{chat_session_id}",
+          {:new_message, new_messages}
+        )
 
         if session.from, do: GenServer.reply(session.from, reply_to_caller)
 
-        new_session = %{session | messages: new_messages, task_ref: nil, from: nil, remind_timer: nil}
-        new_state   = %{state | ref_to_session: new_ref_map}
-                      |> put_session(chat_session_id, new_session)
+        new_session = %{
+          session
+          | messages: new_messages,
+            task_ref: nil,
+            from: nil,
+            remind_timer: nil
+        }
+
+        new_state =
+          %{state | ref_to_session: new_ref_map}
+          |> put_session(chat_session_id, new_session)
 
         {:noreply, new_state}
     end
@@ -368,13 +434,19 @@ defmodule Eai.Chat do
         if session.remind_timer, do: Process.cancel_timer(session.remind_timer)
         Logger.error("Chat: task crashed in session '#{chat_session_id}' — #{inspect(reason)}")
 
-        Phoenix.PubSub.broadcast(Eai.Naming.pubsub(), "chat_updates:#{chat_session_id}", {:new_message, session.messages})
+        Phoenix.PubSub.broadcast(
+          Eai.Naming.pubsub(),
+          "chat_updates:#{chat_session_id}",
+          {:new_message, session.messages}
+        )
 
         if session.from, do: GenServer.reply(session.from, {:error, {:task_crashed, reason}})
 
         new_session = %{session | task_ref: nil, from: nil, remind_timer: nil}
-        new_state   = %{state | ref_to_session: new_ref_map}
-                      |> put_session(chat_session_id, new_session)
+
+        new_state =
+          %{state | ref_to_session: new_ref_map}
+          |> put_session(chat_session_id, new_session)
 
         {:noreply, new_state}
     end
@@ -383,11 +455,16 @@ defmodule Eai.Chat do
   # 超时提醒
   @impl true
   def handle_info({:remind_model, pty_session_id, chat_session_id}, state) do
-    Logger.info("Chat: timeout reached, triggering timeout window for pty=#{pty_session_id} chat=#{chat_session_id}")
+    Logger.info(
+      "Chat: timeout reached, triggering timeout window for pty=#{pty_session_id} chat=#{chat_session_id}"
+    )
+
     ResultCollector.trigger_timeout_window(pty_session_id)
+
     case Map.fetch(state.sessions, chat_session_id) do
       {:ok, session} ->
         {:noreply, put_session(state, chat_session_id, %{session | remind_timer: nil})}
+
       :error ->
         {:noreply, state}
     end
@@ -413,7 +490,7 @@ defmodule Eai.Chat do
 
   defp build_run_opts(model_opt, prompt_opt, chat_session_id) do
     %{chat_session_id: chat_session_id}
-    |> then(fn m -> if model_opt,  do: Map.put(m, :model,         model_opt),  else: m end)
+    |> then(fn m -> if model_opt, do: Map.put(m, :model, model_opt), else: m end)
     |> then(fn m -> if prompt_opt, do: Map.put(m, :system_prompt, prompt_opt), else: m end)
   end
 

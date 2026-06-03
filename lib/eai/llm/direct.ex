@@ -21,15 +21,16 @@ defmodule Eai.LLM.Direct do
       |> Enum.sort()
       |> Enum.flat_map(fn file ->
         path = Path.join(@tools_dir, file)
+
         case Code.compile_file(path) do
           [{mod, _}] -> [mod]
           _ -> []
         end
       end)
 
-    schemas    = Enum.map(modules, & &1.schema())
-    dispatch   = Map.new(modules, fn mod -> {mod.schema().function.name, mod} end)
-    registry   = %{schemas: schemas, dispatch: dispatch}
+    schemas = Enum.map(modules, & &1.schema())
+    dispatch = Map.new(modules, fn mod -> {mod.schema().function.name, mod} end)
+    registry = %{schemas: schemas, dispatch: dispatch}
 
     :persistent_term.put(:eai_llm_tools, registry)
     registry
@@ -38,39 +39,57 @@ defmodule Eai.LLM.Direct do
   defp tools do
     case :persistent_term.get(:eai_llm_tools, :not_found) do
       :not_found -> load_tools()
-      registry   -> registry
+      registry -> registry
     end
   end
 
   # ── Public API ───────────────────────────────────────────────────────
 
   def run(messages, pty_session_id \\ "default", opts \\ %{}) do
-    entry           = resolve_model_entry(opts)
+    entry = resolve_model_entry(opts)
     chat_session_id = Map.get(opts, :chat_session_id, "default") |> to_string()
-    provider        = Map.get(opts, :provider, entry[:provider] || :openai_compat)
-    adapter         = adapter_for(provider)
+    provider = Map.get(opts, :provider, entry[:provider] || :openai_compat)
+    adapter = adapter_for(provider)
 
-    api_key  = Map.get(opts, :api_key, Eai.Models.api_key(entry))
-    model    = Map.get(opts, :model_str, entry[:model])
-    url      = Map.get(opts, :url, entry[:url])
-    timeout  = Map.get(opts, :receive_timeout, entry[:receive_timeout] || 120_000)
-    effort   = Map.get(opts, :reasoning_effort, entry[:reasoning_effort])
-    prompt   = resolve_prompt(Map.get(opts, :system_prompt))
+    api_key = Map.get(opts, :api_key, Eai.Models.api_key(entry))
+    model = Map.get(opts, :model_str, entry[:model])
+    url = Map.get(opts, :url, entry[:url])
+    timeout = Map.get(opts, :receive_timeout, entry[:receive_timeout] || 120_000)
+    effort = Map.get(opts, :reasoning_effort, entry[:reasoning_effort])
+    prompt = resolve_prompt(Map.get(opts, :system_prompt))
 
     %{schemas: schemas} = tools()
 
     adapter_opts = [reasoning_effort: effort]
-    req     = adapter.to_request_body(messages, model, prompt, schemas, adapter_opts)
+    req = adapter.to_request_body(messages, model, prompt, schemas, adapter_opts)
     req_url = if is_nil(req.url), do: url, else: req.url
     headers = build_headers(provider, api_key, req.headers)
 
-    execute_request(req_url, req.json_body, headers, timeout, messages, pty_session_id, chat_session_id, opts)
+    execute_request(
+      req_url,
+      req.json_body,
+      headers,
+      timeout,
+      messages,
+      pty_session_id,
+      chat_session_id,
+      opts
+    )
   end
 
-  defp execute_request(url, json_body, headers, timeout, messages, pty_session_id, chat_session_id, opts) do
-    entry    = resolve_model_entry(opts)
+  defp execute_request(
+         url,
+         json_body,
+         headers,
+         timeout,
+         messages,
+         pty_session_id,
+         chat_session_id,
+         opts
+       ) do
+    entry = resolve_model_entry(opts)
     provider = Map.get(opts, :provider, entry[:provider] || :openai_compat)
-    adapter  = adapter_for(provider)
+    adapter = adapter_for(provider)
 
     if System.get_env("EAI_DEBUG_LLM_REQUEST") == "1" do
       require Logger
@@ -78,8 +97,10 @@ defmodule Eai.LLM.Direct do
     end
 
     start_time = System.monotonic_time(:millisecond)
-    :telemetry.execute([:eai, :llm, :request, :start], %{system_time: System.system_time()},
-      %{pty_session_id: pty_session_id})
+
+    :telemetry.execute([:eai, :llm, :request, :start], %{system_time: System.system_time()}, %{
+      pty_session_id: pty_session_id
+    })
 
     result = Req.post(url, json: json_body, headers: headers, receive_timeout: timeout)
     duration = System.monotonic_time(:millisecond) - start_time
@@ -87,26 +108,50 @@ defmodule Eai.LLM.Direct do
     handle_http_result(result, duration, messages, pty_session_id, chat_session_id, adapter, opts)
   end
 
-  defp handle_http_result(result, duration, messages, pty_session_id, chat_session_id, adapter, opts) do
+  defp handle_http_result(
+         result,
+         duration,
+         messages,
+         pty_session_id,
+         chat_session_id,
+         adapter,
+         opts
+       ) do
     case result do
       {:ok, %{status: 200, body: resp_body}} ->
-        :telemetry.execute([:eai, :llm, :request, :stop], %{duration_ms: duration},
-          %{pty_session_id: pty_session_id, status: :ok})
+        :telemetry.execute([:eai, :llm, :request, :stop], %{duration_ms: duration}, %{
+          pty_session_id: pty_session_id,
+          status: :ok
+        })
+
         assistant_msg = adapter.from_response(resp_body)
         handle_response(assistant_msg, messages, pty_session_id, chat_session_id, opts)
 
       {:ok, %{status: status, body: body}} ->
-        :telemetry.execute([:eai, :llm, :request, :stop], %{duration_ms: duration},
-          %{pty_session_id: pty_session_id, status: :error})
-        :telemetry.execute([:eai, :llm, :request, :error], %{duration_ms: duration},
-          %{pty_session_id: pty_session_id, reason: "HTTP #{status}", body: inspect(body)})
+        :telemetry.execute([:eai, :llm, :request, :stop], %{duration_ms: duration}, %{
+          pty_session_id: pty_session_id,
+          status: :error
+        })
+
+        :telemetry.execute([:eai, :llm, :request, :error], %{duration_ms: duration}, %{
+          pty_session_id: pty_session_id,
+          reason: "HTTP #{status}",
+          body: inspect(body)
+        })
+
         {:error, "HTTP #{status}: #{inspect(body)}", messages}
 
       {:error, reason} ->
-        :telemetry.execute([:eai, :llm, :request, :stop], %{duration_ms: duration},
-          %{pty_session_id: pty_session_id, status: :error})
-        :telemetry.execute([:eai, :llm, :request, :error], %{duration_ms: duration},
-          %{pty_session_id: pty_session_id, reason: inspect(reason)})
+        :telemetry.execute([:eai, :llm, :request, :stop], %{duration_ms: duration}, %{
+          pty_session_id: pty_session_id,
+          status: :error
+        })
+
+        :telemetry.execute([:eai, :llm, :request, :error], %{duration_ms: duration}, %{
+          pty_session_id: pty_session_id,
+          reason: inspect(reason)
+        })
+
         {:error, reason, messages}
     end
   end
@@ -136,19 +181,25 @@ defmodule Eai.LLM.Direct do
         args = Eai.Utils.sanitize_value(tu[:input])
         tool_use_id = tu[:tool_use_id]
 
-        :telemetry.execute([:eai, :tool, :execute], %{system_time: System.system_time()},
-          %{tool: name, pty_session_id: pty_session_id})
+        :telemetry.execute([:eai, :tool, :execute], %{system_time: System.system_time()}, %{
+          tool: name,
+          pty_session_id: pty_session_id
+        })
 
         content_json =
           try do
             case Map.fetch(dispatch, name) do
               {:ok, mod} -> mod.execute(args, pty_session_id, chat_session_id)
-              :error     -> Jason.encode!(%{error: "unknown tool: #{name}"})
+              :error -> Jason.encode!(%{error: "unknown tool: #{name}"})
             end
           rescue
             e ->
-              :telemetry.execute([:eai, :tool, :error], %{system_time: System.system_time()},
-                %{tool: name, pty_session_id: pty_session_id, error: Exception.message(e)})
+              :telemetry.execute([:eai, :tool, :error], %{system_time: System.system_time()}, %{
+                tool: name,
+                pty_session_id: pty_session_id,
+                error: Exception.message(e)
+              })
+
               Jason.encode!(%{error: Exception.message(e)})
           end
 
@@ -187,18 +238,18 @@ defmodule Eai.LLM.Direct do
   # ── Model / prompt resolution ────────────────────────────────────────
 
   defp resolve_model_entry(%{model: name}) when is_atom(name), do: Eai.Models.get!(name)
-  defp resolve_model_entry(_opts),                             do: Eai.Models.default()
+  defp resolve_model_entry(_opts), do: Eai.Models.default()
 
-  defp resolve_prompt(nil),                    do: Eai.Prompts.default()[:content]
+  defp resolve_prompt(nil), do: Eai.Prompts.default()[:content]
   defp resolve_prompt(name) when is_atom(name), do: Eai.Prompts.get!(name)[:content]
   defp resolve_prompt(text) when is_binary(text), do: text
 
   # ── Adapter dispatch ─────────────────────────────────────────────────
 
-  defp adapter_for(:anthropic),     do: Eai.Adapter.Anthropic
+  defp adapter_for(:anthropic), do: Eai.Adapter.Anthropic
   defp adapter_for(:openai_compat), do: Eai.Adapter.OpenAI
-  defp adapter_for(:converse),      do: Eai.Adapter.Converse
-  defp adapter_for(_),              do: Eai.Adapter.OpenAI
+  defp adapter_for(:converse), do: Eai.Adapter.Converse
+  defp adapter_for(_), do: Eai.Adapter.OpenAI
 
   # ── Header construction ──────────────────────────────────────────────
 

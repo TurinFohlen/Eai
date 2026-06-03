@@ -9,11 +9,13 @@ defmodule Eai.Application do
     children =
       if Application.get_env(:eai, :start_application, true) do
         IO.puts("ℹ️  EAI started.\n")
+        IO.puts("ℹ️  Type Eai.help() for full documentation.\n")
+
         [
           {Phoenix.PubSub, name: Eai.Naming.pubsub()},
           Eai.Cache.Cache,
           Eai.Sandbox.PTYPool,
-          {Eai.Chat, []},
+          {Eai.Chat, []}
         ]
       else
         []
@@ -25,6 +27,7 @@ defmodule Eai.Application do
 
   defp attach_telemetry do
     events = Enum.map(Application.get_env(:eai, :telemetry_events, []), fn {e, _} -> e end)
+
     :telemetry.attach_many(
       "eai-unified-handler",
       events,

@@ -3,11 +3,14 @@ defmodule Eai.Tool.GetLocalTime do
 
   @impl true
   def schema do
-    %{type: "function", function: %{
-      name: "get_local_time",
-      description: "Returns current UTC time in ISO-8601 format.",
-      parameters: %{type: "object", properties: %{}, required: []}
-    }}
+    %{
+      type: "function",
+      function: %{
+        name: "get_local_time",
+        description: "Returns current UTC time in ISO-8601 format.",
+        parameters: %{type: "object", properties: %{}, required: []}
+      }
+    }
   end
 
   @impl true

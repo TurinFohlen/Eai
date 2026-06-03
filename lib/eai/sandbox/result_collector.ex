@@ -9,18 +9,22 @@ defmodule Eai.ResultCollector do
   alias Eai.Cache.Cache
   require Logger
 
-  @left  Application.compile_env(:eai, [:sandbox, :sentinel_left])
+  @left Application.compile_env(:eai, [:sandbox, :sentinel_left])
   @right Application.compile_env(:eai, [:sandbox, :sentinel_right])
 
   defp sandbox_cfg(key), do: Application.fetch_env!(:eai, :sandbox) |> Keyword.fetch!(key)
 
-  def sentinel_left,  do: @left
+  def sentinel_left, do: @left
   def sentinel_right, do: @right
 
   # ── 任务初始化 ──────────────────────────────────────────────────────────────
 
   def init_task(task_id) do
-    Cache.put("result:#{task_id}", %{status: "collecting", started_at: System.monotonic_time(:millisecond)})
+    Cache.put("result:#{task_id}", %{
+      status: "collecting",
+      started_at: System.monotonic_time(:millisecond)
+    })
+
     Cache.put("result:#{task_id}:buffer", "")
   end
 
@@ -35,15 +39,19 @@ defmodule Eai.ResultCollector do
       IO.puts("=== END PTY RAW ===\n")
     end
 
-    data    = Eai.Utils.sanitize_value(data)
+    data = Eai.Utils.sanitize_value(data)
     buf_key = "result:#{task_id}:buffer"
     res_key = "result:#{task_id}"
 
-    buffer  = Cache.get(buf_key) || ""
+    buffer = Cache.get(buf_key) || ""
     new_buf = buffer <> data
 
     if debug? do
-      Logger.debug("RAW new_buf", task_id: task_id, size: byte_size(new_buf), buffer: inspect(new_buf))
+      Logger.debug("RAW new_buf",
+        task_id: task_id,
+        size: byte_size(new_buf),
+        buffer: inspect(new_buf)
+      )
     else
       Logger.debug("RAW new_buf", task_id: task_id, size: byte_size(new_buf))
     end
@@ -62,7 +70,7 @@ defmodule Eai.ResultCollector do
       case {find_first(clean_buf, @left), find_first(clean_buf, @right)} do
         {{start_pos, start_len}, {end_pos, _end_len}} when end_pos > start_pos ->
           core_start = start_pos + start_len
-          core_len   = max(end_pos - core_start, 0)
+          core_len = max(end_pos - core_start, 0)
 
           output =
             clean_buf
@@ -85,8 +93,8 @@ defmodule Eai.ResultCollector do
   def get(task_id) do
     case Cache.get("result:#{task_id}") do
       %{status: "complete"} = r -> %{output: r.output, status: "complete"}
-      %{status: status} = r     -> %{status: status, started_at: Map.get(r, :started_at)}
-      nil                       -> nil
+      %{status: status} = r -> %{status: status, started_at: Map.get(r, :started_at)}
+      nil -> nil
     end
   end
 
@@ -101,12 +109,16 @@ defmodule Eai.ResultCollector do
     buf_key = "result:#{task_id}:buffer"
     res_key = "result:#{task_id}"
 
-    buffer  = Cache.get(buf_key) || ""
+    buffer = Cache.get(buf_key) || ""
     current = Cache.get(res_key)
 
     if debug? do
       IO.puts("\n=== PTY FORCE COMPLETE ===")
-      IO.puts("Buffer (#{byte_size(buffer)} bytes): #{inspect(buffer, binary: :as_buffer, limit: 1000)}")
+
+      IO.puts(
+        "Buffer (#{byte_size(buffer)} bytes): #{inspect(buffer, binary: :as_buffer, limit: 1000)}"
+      )
+
       IO.puts("=== END FORCE COMPLETE ===\n")
     end
 
@@ -117,7 +129,7 @@ defmodule Eai.ResultCollector do
         case {find_first(buffer, @left), find_first(buffer, @right)} do
           {{start_pos, start_len}, {end_pos, _}} when end_pos > start_pos ->
             core_start = start_pos + start_len
-            core_len   = max(end_pos - core_start, 0)
+            core_len = max(end_pos - core_start, 0)
             buffer |> :binary.part(core_start, core_len) |> String.trim()
 
           {{start_pos, start_len}, _} ->
@@ -132,7 +144,12 @@ defmodule Eai.ResultCollector do
 
       Cache.put(res_key, %{output: output, status: "complete"})
       Cache.delete(buf_key)
-      Logger.info("ResultCollector force_complete", task_id: task_id, output_bytes: byte_size(output))
+
+      Logger.info("ResultCollector force_complete",
+        task_id: task_id,
+        output_bytes: byte_size(output)
+      )
+
       {:ok, output}
     end
   end
@@ -153,11 +170,14 @@ defmodule Eai.ResultCollector do
   """
   def check_timeout_window(pty_session_id) do
     key = window_key(pty_session_id)
+
     case Cache.get(key) do
       depth when is_integer(depth) and depth > 0 ->
         Cache.put(key, depth - 1)
         Logger.info("Timeout window consumed for #{pty_session_id}, remaining: #{depth - 1}")
+
         "The timeout you set has been reached. Please safely stop what you're doing and reply now."
+
       _ ->
         Cache.delete(key)
         nil
@@ -175,11 +195,13 @@ defmodule Eai.ResultCollector do
   @doc "检查并清除中断标记，返回 true/false"
   def check_and_clear_interrupt_flag(pty_session_id) do
     key = interrupt_key(pty_session_id)
+
     case Cache.get(key) do
       true ->
         Cache.delete(key)
         Logger.info("Interrupt flag consumed for #{pty_session_id}")
         true
+
       _ ->
         false
     end
@@ -190,10 +212,10 @@ defmodule Eai.ResultCollector do
   defp find_first(subject, pattern) do
     case :binary.match(subject, pattern) do
       {pos, len} -> {pos, len}
-      :nomatch   -> nil
+      :nomatch -> nil
     end
   end
 
-  defp window_key(pty_session_id),    do: "agent:#{pty_session_id}:timeout_window"
+  defp window_key(pty_session_id), do: "agent:#{pty_session_id}:timeout_window"
   defp interrupt_key(pty_session_id), do: "agent:#{pty_session_id}:interrupt_flag"
 end

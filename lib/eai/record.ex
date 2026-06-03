@@ -31,8 +31,8 @@ defmodule Eai.Record do
   end
 
   def handle_info({:new_message, messages}, state) do
-    sanitized  = Utils.sanitize_messages(messages)
-    binary     = :erlang.term_to_binary(sanitized)
+    sanitized = Utils.sanitize_messages(messages)
+    binary = :erlang.term_to_binary(sanitized)
     compressed = :zlib.gzip(binary)
 
     File.mkdir_p!(Path.dirname(state.file_path))

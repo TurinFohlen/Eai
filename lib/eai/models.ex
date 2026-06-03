@@ -28,7 +28,8 @@ defmodule Eai.Models do
 
   @doc "按 :name atom 查找模型，找不到返回 nil。"
   @spec get(atom() | nil) :: model_entry() | nil
-  def get(nil),  do: default()
+  def get(nil), do: default()
+
   def get(name) when is_atom(name) do
     Enum.find(all(), fn entry -> entry[:name] == name end)
   end
@@ -37,7 +38,7 @@ defmodule Eai.Models do
   @spec get!(atom()) :: model_entry()
   def get!(name) do
     case get(name) do
-      nil   -> raise ArgumentError, "unknown model #{inspect(name)}; available: #{inspect(names())}"
+      nil -> raise ArgumentError, "unknown model #{inspect(name)}; available: #{inspect(names())}"
       entry -> entry
     end
   end
@@ -48,7 +49,7 @@ defmodule Eai.Models do
 
   @doc "返回所有标注了 vision: true 的模型条目。"
   @spec vision_models() :: [model_entry()]
-  def vision_models, do: Enum.filter(all(), & &1[:vision] == true)
+  def vision_models, do: Enum.filter(all(), &(&1[:vision] == true))
 
   @doc "返回第一个支持视觉的模型，找不到返回 nil。"
   @spec default_vision() :: model_entry() | nil
@@ -60,8 +61,12 @@ defmodule Eai.Models do
   @spec api_key(model_entry()) :: String.t() | nil
   def api_key(entry) do
     case entry[:api_key_env] do
-      nil -> nil
-      env -> System.get_env(env) || raise "environment variable #{env} is not set (required by model #{entry[:name]})"
+      nil ->
+        nil
+
+      env ->
+        System.get_env(env) ||
+          raise "environment variable #{env} is not set (required by model #{entry[:name]})"
     end
   end
 
@@ -69,17 +74,17 @@ defmodule Eai.Models do
   @spec to_run_opts(model_entry()) :: map()
   def to_run_opts(entry) do
     base = %{
-      model:    entry[:model],
-      url:      entry[:url],
+      model: entry[:model],
+      url: entry[:url],
       provider: entry[:provider]
     }
 
     base
-    |> maybe_put(:api_key,          api_key(entry))
-    |> maybe_put(:receive_timeout,  entry[:receive_timeout])
+    |> maybe_put(:api_key, api_key(entry))
+    |> maybe_put(:receive_timeout, entry[:receive_timeout])
     |> maybe_put(:reasoning_effort, entry[:reasoning_effort])
   end
 
-  defp maybe_put(map, _key, nil),   do: map
-  defp maybe_put(map, key, value),  do: Map.put(map, key, value)
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 end

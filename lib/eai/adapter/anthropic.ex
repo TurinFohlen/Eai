@@ -19,7 +19,9 @@ defmodule Eai.Adapter.Anthropic do
       case List.pop_at(anthropic_tools, -1) do
         {last, rest} when not is_nil(last) ->
           rest ++ [Map.put(last, :cache_control, %{type: "ephemeral"})]
-        _ -> anthropic_tools
+
+        _ ->
+          anthropic_tools
       end
 
     anthropic_messages = messages |> Enum.flat_map(&message_to_anthropic/1)
@@ -32,11 +34,12 @@ defmodule Eai.Adapter.Anthropic do
       tools: anthropic_tools
     }
 
-    body = if effort do
-      Map.put(body, :thinking, %{type: "enabled", budget_tokens: 5000})
-    else
-      body
-    end
+    body =
+      if effort do
+        Map.put(body, :thinking, %{type: "enabled", budget_tokens: 5000})
+      else
+        body
+      end
 
     %{url: nil, headers: [], json_body: body}
   end
@@ -66,7 +69,8 @@ defmodule Eai.Adapter.Anthropic do
         blocks = content |> List.wrap() |> Enum.map(&anthropic_block_to_ir/1)
         [%{role: :assistant, content: blocks}]
 
-      _ -> []
+      _ ->
+        []
     end)
   end
 
@@ -87,27 +91,30 @@ defmodule Eai.Adapter.Anthropic do
       end
 
     # Tool results MUST be separate user messages (Anthropic requirement)
-    msgs = msgs ++ Enum.map(tool_results, fn {:tool_result, kw} ->
-      result_content = Enum.map(kw[:content], &ir_block_to_anthropic_content/1)
+    msgs =
+      msgs ++
+        Enum.map(tool_results, fn {:tool_result, kw} ->
+          result_content = Enum.map(kw[:content], &ir_block_to_anthropic_content/1)
 
-      # Anthropic requires tool_result content to be a string (not array) when pure text
-      result_payload = if match?([%{type: "text", text: _}], result_content) do
-        hd(result_content).text
-      else
-        result_content
-      end
+          # Anthropic requires tool_result content to be a string (not array) when pure text
+          result_payload =
+            if match?([%{type: "text", text: _}], result_content) do
+              hd(result_content).text
+            else
+              result_content
+            end
 
-      %{
-        role: "user",
-        content: [
           %{
-            type: "tool_result",
-            tool_use_id: kw[:tool_use_id],
-            content: result_payload
+            role: "user",
+            content: [
+              %{
+                type: "tool_result",
+                tool_use_id: kw[:tool_use_id],
+                content: result_payload
+              }
+            ]
           }
-        ]
-      }
-    end)
+        end)
 
     # If no messages produced (empty user), add placeholder (shouldn't happen normally)
     if msgs == [] do
@@ -142,6 +149,7 @@ defmodule Eai.Adapter.Anthropic do
 
   defp ir_block_to_anthropic_content({:image, kw}) do
     {:bytes, data} = kw[:source]
+
     %{
       type: "image",
       source: %{
@@ -190,16 +198,28 @@ defmodule Eai.Adapter.Anthropic do
     {:text, t}
   end
 
-  defp anthropic_block_to_ir(%{"type" => "image", "source" => %{"type" => "base64", "media_type" => mime, "data" => data}}) do
+  defp anthropic_block_to_ir(%{
+         "type" => "image",
+         "source" => %{"type" => "base64", "media_type" => mime, "data" => data}
+       }) do
     format = String.replace_prefix(mime, "image/", "")
     {:image, [format: format, source: {:bytes, data}]}
   end
 
-  defp anthropic_block_to_ir(%{"type" => "tool_use", "id" => id, "name" => name, "input" => input}) do
+  defp anthropic_block_to_ir(%{
+         "type" => "tool_use",
+         "id" => id,
+         "name" => name,
+         "input" => input
+       }) do
     {:tool_use, [tool_use_id: id, name: name, input: input]}
   end
 
-  defp anthropic_block_to_ir(%{"type" => "tool_result", "tool_use_id" => id, "content" => content}) do
+  defp anthropic_block_to_ir(%{
+         "type" => "tool_result",
+         "tool_use_id" => id,
+         "content" => content
+       }) do
     result_blocks = content |> List.wrap() |> Enum.map(&anthropic_block_to_ir/1)
     {:tool_result, [tool_use_id: id, content: result_blocks]}
   end
@@ -211,18 +231,36 @@ defmodule Eai.Adapter.Anthropic do
   # For from_messages: raw user content → IR block
   defp anthropic_content_to_ir_block(%{"type" => "text", "text" => t}), do: {:text, t}
   defp anthropic_content_to_ir_block(%{"type" => "thinking", "thinking" => t}), do: {:thinking, t}
-  defp anthropic_content_to_ir_block(%{"type" => "redacted_thinking", "data" => t}), do: {:thinking, t}
-  defp anthropic_content_to_ir_block(%{"type" => "image", "source" => %{"type" => "base64", "media_type" => mime, "data" => data}}) do
+
+  defp anthropic_content_to_ir_block(%{"type" => "redacted_thinking", "data" => t}),
+    do: {:thinking, t}
+
+  defp anthropic_content_to_ir_block(%{
+         "type" => "image",
+         "source" => %{"type" => "base64", "media_type" => mime, "data" => data}
+       }) do
     format = String.replace_prefix(mime, "image/", "")
     {:image, [format: format, source: {:bytes, data}]}
   end
-  defp anthropic_content_to_ir_block(%{"type" => "tool_result", "tool_use_id" => id, "content" => content}) do
+
+  defp anthropic_content_to_ir_block(%{
+         "type" => "tool_result",
+         "tool_use_id" => id,
+         "content" => content
+       }) do
     result_blocks = content |> List.wrap() |> Enum.map(&anthropic_content_to_ir_block/1)
     {:tool_result, [tool_use_id: id, content: result_blocks]}
   end
-  defp anthropic_content_to_ir_block(%{"type" => "tool_use", "id" => id, "name" => name, "input" => input}) do
+
+  defp anthropic_content_to_ir_block(%{
+         "type" => "tool_use",
+         "id" => id,
+         "name" => name,
+         "input" => input
+       }) do
     {:tool_use, [tool_use_id: id, name: name, input: input]}
   end
+
   defp anthropic_content_to_ir_block(other) do
     {:text, inspect(other)}
   end
@@ -233,6 +271,7 @@ defmodule Eai.Adapter.Anthropic do
     Enum.map(tools, fn
       %{function: %{name: name, description: desc, parameters: params}} ->
         %{name: name, description: desc, input_schema: params}
+
       %{name: name, description: desc, input_schema: params} ->
         %{name: name, description: desc, input_schema: params}
     end)

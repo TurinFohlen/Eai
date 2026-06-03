@@ -19,10 +19,10 @@ defmodule Eai.TelemetryHandler do
     measurements = Map.delete(measurements, :system_time)
 
     Logger.info("telemetry",
-      event:        event,
-      label:        label,
+      event: event,
+      label: label,
       measurements: measurements,
-      metadata:     metadata
+      metadata: metadata
     )
   end
 end

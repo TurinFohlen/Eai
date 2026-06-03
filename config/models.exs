@@ -20,71 +20,72 @@ import Config
 config :eai, :models, [
   # ── 主力对话模型（默认）─────────────────────────────────────────
   [
-    name:             :deepseek,
-    model:            "deepseek-v4-pro",
-    url:              "https://api.deepseek.com/chat/completions",
-    provider:         :openai_compat,
-    api_key_env:      "DEEPSEEK_API_KEY",
+    name: :deepseek,
+    model: "deepseek-v4-pro",
+    url: "https://api.deepseek.com/chat/completions",
+    provider: :openai_compat,
+    api_key_env: "DEEPSEEK_API_KEY",
     reasoning_effort: "high",
-    receive_timeout:  120_000
+    receive_timeout: 120_000
   ],
 
   # ── OpenAI ──────────────────────────────────────────────────────
   [
-    name:            :gpt4o,
-    model:           "gpt-4o",
-    url:             "https://api.openai.com/v1/chat/completions",
-    provider:        :openai_compat,
-    api_key_env:     "OPENAI_API_KEY",
-    vision:          true,
+    name: :gpt4o,
+    model: "gpt-4o",
+    url: "https://api.openai.com/v1/chat/completions",
+    provider: :openai_compat,
+    api_key_env: "OPENAI_API_KEY",
+    vision: true,
     receive_timeout: 60_000
   ],
   [
-    name:            :gpt4o_mini,
-    model:           "gpt-4o-mini",
-    url:             "https://api.openai.com/v1/chat/completions",
-    provider:        :openai_compat,
-    api_key_env:     "OPENAI_API_KEY",
-    vision:          true,
+    name: :gpt4o_mini,
+    model: "gpt-4o-mini",
+    url: "https://api.openai.com/v1/chat/completions",
+    provider: :openai_compat,
+    api_key_env: "OPENAI_API_KEY",
+    vision: true,
     receive_timeout: 30_000
   ],
 
   # ── Anthropic ───────────────────────────────────────────────────
   [
-    name:            :claude_opus,
-    model:           "claude-opus-4-6",
-    url:             "https://api.anthropic.com/v1/messages",
-    provider:        :anthropic,
-    api_key_env:     "ANTHROPIC_API_KEY",
-    vision:          true,
+    name: :claude_opus,
+    model: "claude-opus-4-6",
+    url: "https://api.anthropic.com/v1/messages",
+    provider: :anthropic,
+    api_key_env: "ANTHROPIC_API_KEY",
+    vision: true,
     receive_timeout: 120_000
   ],
   [
-    name:            :claude_sonnet,
-    model:           "claude-sonnet-4-6",
-    url:             "https://api.anthropic.com/v1/messages",
-    provider:        :anthropic,
-    api_key_env:     "ANTHROPIC_API_KEY",
-    vision:          true,
+    name: :claude_sonnet,
+    model: "claude-sonnet-4-6",
+    url: "https://api.anthropic.com/v1/messages",
+    provider: :anthropic,
+    api_key_env: "ANTHROPIC_API_KEY",
+    vision: true,
     receive_timeout: 60_000
   ],
 
   # ── 本地 / 自托管（Ollama） ─────────────────────────────────────
   [
-    name:            :llava,
-    model:           "llava",
-    url:             "http://localhost:11434/v1/chat/completions",
-    provider:        :openai_compat,
-    api_key_env:     nil,           # Ollama 无需 key
-    vision:          true,
+    name: :llava,
+    model: "llava",
+    url: "http://localhost:11434/v1/chat/completions",
+    provider: :openai_compat,
+    # Ollama 无需 key
+    api_key_env: nil,
+    vision: true,
     receive_timeout: 120_000
   ],
   [
-    name:            :llama3,
-    model:           "llama3",
-    url:             "http://localhost:11434/v1/chat/completions",
-    provider:        :openai_compat,
-    api_key_env:     nil,
+    name: :llama3,
+    model: "llama3",
+    url: "http://localhost:11434/v1/chat/completions",
+    provider: :openai_compat,
+    api_key_env: nil,
     receive_timeout: 120_000
-  ],
+  ]
 ]

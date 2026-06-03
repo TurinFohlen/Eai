@@ -3,11 +3,14 @@ defmodule Eai.Tool.ListPtySessions do
 
   @impl true
   def schema do
-    %{type: "function", function: %{
-      name: "list_pty_sessions",
-      description: "List all active PTY sessions with their status and current task.",
-      parameters: %{type: "object", properties: %{}, required: []}
-    }}
+    %{
+      type: "function",
+      function: %{
+        name: "list_pty_sessions",
+        description: "List all active PTY sessions with their status and current task.",
+        parameters: %{type: "object", properties: %{}, required: []}
+      }
+    }
   end
 
   @impl true

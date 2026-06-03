@@ -3,11 +3,15 @@ defmodule Eai.Tool.ListChatSessions do
 
   @impl true
   def schema do
-    %{type: "function", function: %{
-      name: "list_chat_sessions",
-      description: "List all active chat sessions with their message count and status (idle/busy).",
-      parameters: %{type: "object", properties: %{}, required: []}
-    }}
+    %{
+      type: "function",
+      function: %{
+        name: "list_chat_sessions",
+        description:
+          "List all active chat sessions with their message count and status (idle/busy).",
+        parameters: %{type: "object", properties: %{}, required: []}
+      }
+    }
   end
 
   @impl true

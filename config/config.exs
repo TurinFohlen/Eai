@@ -3,10 +3,24 @@ import Config
 # ── Logger 元数据键声明 ───────────────────────────────────────────────────────
 config :logger, :console,
   metadata: [
-    :pty_session_id, :task_id, :current_task, :pty, :msg,
-    :priv_src, :src, :link, :reason, :state,
-    :output_bytes, :size, :buffer, :duration_ms,
-    :event, :label, :measurements, :metadata,
+    :pty_session_id,
+    :task_id,
+    :current_task,
+    :pty,
+    :msg,
+    :priv_src,
+    :src,
+    :link,
+    :reason,
+    :state,
+    :output_bytes,
+    :size,
+    :buffer,
+    :duration_ms,
+    :event,
+    :label,
+    :measurements,
+    :metadata,
     :body
   ]
 
@@ -20,30 +34,33 @@ import_config "models.exs"
 
 # ── Sandbox ───────────────────────────────────────────────────────────────────
 config :eai, :sandbox,
-  work_dir_root:      "/home/eai_agents",
-  script_tmp_prefix:  "/tmp/eai_",
+  work_dir_root: "/home/eai_agents",
+  script_tmp_prefix: "/tmp/eai_",
   # shared_repo_path:   "/custom/path/to/shared.git",
-  pty_cols:           200,
-  pty_rows:           50,
-  pty_init_sleep_ms:  200,
+  pty_cols: 200,
+  pty_rows: 50,
+  pty_init_sleep_ms: 200,
   pty_ready_sleep_ms: 300,
-  sentinel_left:      "___EAI_START___",
-  sentinel_right:     "___EAI_END___",
-  debug_pty_output:   false
-config :eai, :poll_cooldown_ms, 2_000   # 默认 2 秒
+  sentinel_left: "___EAI_START___",
+  sentinel_right: "___EAI_END___",
+  debug_pty_output: false
+
+# 默认 2 秒
+config :eai, :poll_cooldown_ms, 2_000
+
 # ── Telemetry ─────────────────────────────────────────────────────────────────
 config :eai, :telemetry_events, [
-  {[:eai, :session, :spawn],       "PTY session spawned"},
-  {[:eai, :session, :reset],       "PTY session force-reset"},
-  {[:eai, :task, :start],          "Task submitted"},
-  {[:eai, :task, :chunk],          "PTY chunk received"},
-  {[:eai, :task, :complete],       "Task complete"},
-  {[:eai, :task, :timeout],        "Task timed out"},
+  {[:eai, :session, :spawn], "PTY session spawned"},
+  {[:eai, :session, :reset], "PTY session force-reset"},
+  {[:eai, :task, :start], "Task submitted"},
+  {[:eai, :task, :chunk], "PTY chunk received"},
+  {[:eai, :task, :complete], "Task complete"},
+  {[:eai, :task, :timeout], "Task timed out"},
   {[:eai, :llm, :request, :start], "LLM request start"},
-  {[:eai, :llm, :request, :stop],  "LLM request stop"},
-  {[:eai, :tool, :execute],        "Tool executed"},
+  {[:eai, :llm, :request, :stop], "LLM request stop"},
+  {[:eai, :tool, :execute], "Tool executed"},
   {[:eai, :llm, :request, :error], "LLM request error"},
-  {[:eai, :tool, :error],          "Tool execution error"}
+  {[:eai, :tool, :error], "Tool execution error"}
 ]
 
 # ── System Prompt ─────────────────────────────────────────────────────────────

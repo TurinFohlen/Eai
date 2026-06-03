@@ -22,28 +22,41 @@ defmodule Eai.Tool.WriteToSession do
 
   @impl true
   def schema do
-    %{type: "function", function: %{
-      name: "write_to_session",
-      description: @description,
-      parameters: %{type: "object",
-        properties: %{
-          input:          %{type: "string", description: "String to write, using escape sequences for control chars (e.g. \"y\\\\n\", \"\\\\x03\\\\n\")."},
-          pty_session_id: %{type: "string", description: "PTY session ID (default: 'default')."}
-        },
-        required: ["input"]
+    %{
+      type: "function",
+      function: %{
+        name: "write_to_session",
+        description: @description,
+        parameters: %{
+          type: "object",
+          properties: %{
+            input: %{
+              type: "string",
+              description:
+                "String to write, using escape sequences for control chars (e.g. \"y\\\\n\", \"\\\\x03\\\\n\")."
+            },
+            pty_session_id: %{type: "string", description: "PTY session ID (default: 'default')."}
+          },
+          required: ["input"]
+        }
       }
-    }}
+    }
   end
 
   @impl true
   def execute(args, pty_session_id, _chat_session_id) do
-    input  = Map.get(args, "input", "")
+    input = Map.get(args, "input", "")
     target = Map.get(args, "pty_session_id", pty_session_id)
-    raw    = unescape(input)
+    raw = unescape(input)
+
     if Application.fetch_env!(:eai, :sandbox) |> Keyword.fetch!(:debug_pty_output) do
-      IO.puts("\n=== WRITE_TO_SESSION [#{target}] ===\ninput: #{inspect(input)}\nraw:   #{inspect(raw)}\n=== END WRITE ===")
+      IO.puts(
+        "\n=== WRITE_TO_SESSION [#{target}] ===\ninput: #{inspect(input)}\nraw:   #{inspect(raw)}\n=== END WRITE ==="
+      )
     end
+
     Eai.Naming.pool().write_raw(target, raw)
+
     %{status: "ok", wrote: inspect(raw)}
     |> Eai.Utils.sanitize_value()
     |> Jason.encode!()

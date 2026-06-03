@@ -47,14 +47,20 @@ defmodule Eai.Sandbox.PTYPool do
     session = Map.get(sessions, pty_session_id, %{pty: nil, task_id: nil, task_started_at: nil})
 
     if session.task_id != nil do
-      Logger.warning("PTYPool busy", pty_session_id: pty_session_id, current_task: session.task_id)
+      Logger.warning("PTYPool busy",
+        pty_session_id: pty_session_id,
+        current_task: session.task_id
+      )
+
       {:reply, {:error, :busy}, sessions}
     else
       {pty, sessions} = get_or_create(pty_session_id, sessions)
       ResultCollector.init_task(task_id)
 
       now = System.monotonic_time(:millisecond)
-      sessions = sessions
+
+      sessions =
+        sessions
         |> put_in([pty_session_id, :task_id], task_id)
         |> put_in([pty_session_id, :task_started_at], now)
 
@@ -64,10 +70,10 @@ defmodule Eai.Sandbox.PTYPool do
         %{pty_session_id: pty_session_id, task_id: task_id}
       )
 
-      left  = ResultCollector.sentinel_left()
+      left = ResultCollector.sentinel_left()
       right = ResultCollector.sentinel_right()
 
-      b64_left  = Base.encode64(left  <> "\n")
+      b64_left = Base.encode64(left <> "\n")
       b64_right = Base.encode64("\n" <> right)
 
       line =
@@ -83,51 +89,66 @@ defmodule Eai.Sandbox.PTYPool do
   def handle_call({:force_reset, pty_session_id}, _from, sessions) do
     # 1. 强制完成该 agent 当前正在进行的任务（如果有），避免缓存泄漏
     old_task_id = get_in(sessions, [pty_session_id, :task_id])
+
     if is_binary(old_task_id) do
       ResultCollector.force_complete(old_task_id)
     end
 
     # 2. 杀死 PTY 进程并从池中彻底移除 session
-    sessions = case Map.get(sessions, pty_session_id) do
-      nil ->
-        Logger.info("PTYPool.force_reset: not in pool", pty_session_id: pty_session_id)
-        sessions
+    sessions =
+      case Map.get(sessions, pty_session_id) do
+        nil ->
+          Logger.info("PTYPool.force_reset: not in pool", pty_session_id: pty_session_id)
+          sessions
 
-      %{pty: pty} ->
-        Logger.warning("PTYPool.force_reset: killing", pty_session_id: pty_session_id, pty: inspect(pty))
-        :telemetry.execute(
-          [:eai, :session, :reset],
-          %{system_time: System.system_time()},
-          %{pty_session_id: pty_session_id}
-        )
-        if is_pid(pty) and Process.alive?(pty), do: Process.exit(pty, :kill)
-        Map.delete(sessions, pty_session_id)
-    end
+        %{pty: pty} ->
+          Logger.warning("PTYPool.force_reset: killing",
+            pty_session_id: pty_session_id,
+            pty: inspect(pty)
+          )
+
+          :telemetry.execute(
+            [:eai, :session, :reset],
+            %{system_time: System.system_time()},
+            %{pty_session_id: pty_session_id}
+          )
+
+          if is_pid(pty) and Process.alive?(pty), do: Process.exit(pty, :kill)
+          Map.delete(sessions, pty_session_id)
+      end
 
     {:reply, :ok, sessions}
   end
 
   def handle_call(:list_sessions, _from, sessions) do
-    info = Map.new(sessions, fn {pty_session_id, s} ->
-      {pty_session_id, %{
-        pty:          inspect(s.pty),
-        alive:        is_pid(s.pty) and Process.alive?(s.pty),
-        current_task: s.task_id,
-        running_ms:   if(s.task_started_at, do: System.monotonic_time(:millisecond) - s.task_started_at)
-      }}
-    end)
+    info =
+      Map.new(sessions, fn {pty_session_id, s} ->
+        {pty_session_id,
+         %{
+           pty: inspect(s.pty),
+           alive: is_pid(s.pty) and Process.alive?(s.pty),
+           current_task: s.task_id,
+           running_ms:
+             if(s.task_started_at, do: System.monotonic_time(:millisecond) - s.task_started_at)
+         }}
+      end)
+
     {:reply, info, sessions}
   end
 
   def handle_call({:clear_task, pty_session_id, _task_id}, _from, sessions) do
     # 无条件清理指定 agent 的 task 状态，不再匹配具体的 task_id
-    sessions = case Map.get(sessions, pty_session_id) do
-      nil -> sessions
-      _ ->
-        sessions
-        |> put_in([pty_session_id, :task_id], nil)
-        |> put_in([pty_session_id, :task_started_at], nil)
-    end
+    sessions =
+      case Map.get(sessions, pty_session_id) do
+        nil ->
+          sessions
+
+        _ ->
+          sessions
+          |> put_in([pty_session_id, :task_id], nil)
+          |> put_in([pty_session_id, :task_started_at], nil)
+      end
+
     {:reply, :ok, sessions}
   end
 
@@ -136,6 +157,7 @@ defmodule Eai.Sandbox.PTYPool do
       %{pty: pty} when is_pid(pty) ->
         ExPTY.write(pty, input)
         {:reply, :ok, sessions}
+
       nil ->
         {:reply, {:error, :no_session}, sessions}
     end
@@ -150,14 +172,16 @@ defmodule Eai.Sandbox.PTYPool do
 
           # 2. 只 echo 消息 + 右哨兵（左哨兵已经在 PTY 流中）
           right = ResultCollector.sentinel_right()
-          msg   = "Task forcefully interrupted by user. Please reply now."
-          b64   = Base.encode64(msg <> right)
-          cmd   = "echo #{b64} | base64 -d\n"
+          msg = "Task forcefully interrupted by user. Please reply now."
+          b64 = Base.encode64(msg <> right)
+          cmd = "echo #{b64} | base64 -d\n"
 
           ExPTY.write(pty, cmd)
 
           Logger.info("PTYPool interrupt_task: Ctrl+C + right sentinel echo sent",
-            pty_session_id: pty_session_id, task_id: task_id)
+            pty_session_id: pty_session_id,
+            task_id: task_id
+          )
         end
 
         {:reply, :ok, sessions}
@@ -180,23 +204,37 @@ defmodule Eai.Sandbox.PTYPool do
           %{pty_session_id: pty_session_id, task_id: task_id}
         )
 
-        sessions = case ResultCollector.collect(task_id, data) do
-          {:complete, output} ->
-            duration = System.monotonic_time(:millisecond) - (started_at || 0)
-            Logger.info("PTYPool task complete", pty_session_id: pty_session_id, task_id: task_id, duration_ms: duration, output_bytes: byte_size(output))
-            :telemetry.execute(
-              [:eai, :task, :complete],
-              %{duration_ms: duration, output_size: byte_size(output)},
-              %{pty_session_id: pty_session_id, task_id: task_id}
-            )
-            sessions
-            |> put_in([pty_session_id, :task_id], nil)
-            |> put_in([pty_session_id, :task_started_at], nil)
+        sessions =
+          case ResultCollector.collect(task_id, data) do
+            {:complete, output} ->
+              duration = System.monotonic_time(:millisecond) - (started_at || 0)
 
-          other ->
-            Logger.debug("PTYPool collect", pty_session_id: pty_session_id, task_id: task_id, state: inspect(other))
-            sessions
-        end
+              Logger.info("PTYPool task complete",
+                pty_session_id: pty_session_id,
+                task_id: task_id,
+                duration_ms: duration,
+                output_bytes: byte_size(output)
+              )
+
+              :telemetry.execute(
+                [:eai, :task, :complete],
+                %{duration_ms: duration, output_size: byte_size(output)},
+                %{pty_session_id: pty_session_id, task_id: task_id}
+              )
+
+              sessions
+              |> put_in([pty_session_id, :task_id], nil)
+              |> put_in([pty_session_id, :task_started_at], nil)
+
+            other ->
+              Logger.debug("PTYPool collect",
+                pty_session_id: pty_session_id,
+                task_id: task_id,
+                state: inspect(other)
+              )
+
+              sessions
+          end
 
         {:noreply, sessions}
 
@@ -215,39 +253,43 @@ defmodule Eai.Sandbox.PTYPool do
   defp get_or_create(pty_session_id, sessions) do
     case Map.get(sessions, pty_session_id) do
       nil ->
-        pool_pid  = self()
+        pool_pid = self()
         work_root = sandbox_cfg(:work_dir_root)
-        work_dir  = "#{work_root}/#{pty_session_id}"
+        work_dir = "#{work_root}/#{pty_session_id}"
         File.mkdir_p!(work_dir)
 
-        priv_src  = sandbox_cfg(:priv_src)
+        priv_src = sandbox_cfg(:priv_src)
         priv_link = Path.join(work_dir, "priv")
         maybe_link_priv(pty_session_id, priv_src, priv_link)
 
         shell = System.find_executable("bash") || "/bin/sh"
-        cols  = sandbox_cfg(:pty_cols)
-        rows  = sandbox_cfg(:pty_rows)
+        cols = sandbox_cfg(:pty_cols)
+        rows = sandbox_cfg(:pty_rows)
 
-        {:ok, pty} = ExPTY.spawn(shell, [],
-          name: "xterm-256color",
-          cols: cols, rows: rows,
-          cwd: work_dir,
-          on_data: fn _pty, _pid, data ->
-            send(pool_pid, {:pty_data, pty_session_id, data})
-          end,
-          on_exit: fn _pty, _pid, _code, _sig ->
-            GenServer.cast(pool_pid, {:remove, pty_session_id})
-          end
-        )
+        {:ok, pty} =
+          ExPTY.spawn(shell, [],
+            name: "xterm-256color",
+            cols: cols,
+            rows: rows,
+            cwd: work_dir,
+            on_data: fn _pty, _pid, data ->
+              send(pool_pid, {:pty_data, pty_session_id, data})
+            end,
+            on_exit: fn _pty, _pid, _code, _sig ->
+              GenServer.cast(pool_pid, {:remove, pty_session_id})
+            end
+          )
 
         Process.sleep(sandbox_cfg(:pty_init_sleep_ms))
 
         flush_init_noise = fn fun ->
           receive do
             {:pty_data, ^pty_session_id, _data} -> fun.(fun)
-          after 50 -> :ok
+          after
+            50 -> :ok
           end
         end
+
         flush_init_noise.(flush_init_noise)
 
         :telemetry.execute(
@@ -255,6 +297,7 @@ defmodule Eai.Sandbox.PTYPool do
           %{system_time: System.system_time()},
           %{pty_session_id: pty_session_id, pty: inspect(pty)}
         )
+
         Logger.info("PTYPool spawned", pty_session_id: pty_session_id, pty: inspect(pty))
 
         Process.sleep(sandbox_cfg(:pty_ready_sleep_ms))
@@ -283,15 +326,23 @@ defmodule Eai.Sandbox.PTYPool do
         case File.ln_s(priv_src, priv_link) do
           :ok ->
             Logger.info("PTYPool priv symlink created",
-              pty_session_id: pty_session_id, src: priv_src, link: priv_link)
+              pty_session_id: pty_session_id,
+              src: priv_src,
+              link: priv_link
+            )
+
           {:error, reason} ->
             Logger.warning("PTYPool priv symlink failed",
-              pty_session_id: pty_session_id, reason: reason)
+              pty_session_id: pty_session_id,
+              reason: reason
+            )
         end
 
       true ->
         Logger.warning("PTYPool priv src not found, skip symlink",
-          pty_session_id: pty_session_id, priv_src: priv_src)
+          pty_session_id: pty_session_id,
+          priv_src: priv_src
+        )
     end
   end
 end

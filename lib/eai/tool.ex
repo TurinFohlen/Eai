@@ -4,5 +4,6 @@ defmodule Eai.Tool do
   """
 
   @callback schema() :: map()
-  @callback execute(args :: map(), pty_session_id :: String.t(), chat_session_id :: String.t()) :: String.t()
+  @callback execute(args :: map(), pty_session_id :: String.t(), chat_session_id :: String.t()) ::
+              String.t()
 end

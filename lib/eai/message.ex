@@ -193,5 +193,4 @@ defmodule Eai.Message do
   defp block_from_json_map(other) do
     {:text, "unexpected block: #{inspect(other)}"}
   end
-
 end

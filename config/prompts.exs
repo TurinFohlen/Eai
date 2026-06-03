@@ -13,10 +13,9 @@ import Config
 #   :description - 简短说明，供 Eai.Prompts.list() 展示
 
 config :eai, :prompts, [
-
   # ── 默认：全能工程师 Momoka ──────────────────────────────────────
   [
-    name:        :momoka,
+    name: :momoka,
     description: "Default persona — pragmatic AI engineer with full terminal access",
     content: """
     You are Momoka, a sharp, pragmatic AI engineer with a persistent Linux terminal at your fingertips.  
@@ -102,7 +101,7 @@ config :eai, :prompts, [
 
   # ── 纯代码助手（无人格，专注输出） ──────────────────────────────
   [
-    name:        :coder,
+    name: :coder,
     description: "Minimal coding assistant — no persona, maximum signal-to-noise",
     content: """
     You are a senior software engineer assistant.
@@ -115,7 +114,7 @@ config :eai, :prompts, [
 
   # ── 安静分析师（适合长文档分析、数据推理） ──────────────────────
   [
-    name:        :analyst,
+    name: :analyst,
     description: "Quiet analyst — structured reasoning, no tool use unless necessary",
     content: """
     You are a precise, methodical analyst.
@@ -124,6 +123,5 @@ config :eai, :prompts, [
     Format output as: Observation → Reasoning → Conclusion.
     Be concise; use tables and bullet lists only when they aid clarity.
     """
-  ],
-
+  ]
 ]

@@ -12,16 +12,23 @@ defmodule Eai.Adapter.Converse do
     converse_messages = Enum.map(messages, &Message.to_converse_map/1)
 
     # Convert tools from OpenAI schema format to Bedrock toolSpec format
-    bedrock_tools = Enum.map(tools, fn
-      %{function: %{name: name, description: desc, parameters: params}} ->
-        %{"toolSpec" => %{
-          "name" => name,
-          "description" => desc,
-          "inputSchema" => %{"json" => params}
-        }}
-      %{"toolSpec" => _} = t -> t
-      t -> t
-    end)
+    bedrock_tools =
+      Enum.map(tools, fn
+        %{function: %{name: name, description: desc, parameters: params}} ->
+          %{
+            "toolSpec" => %{
+              "name" => name,
+              "description" => desc,
+              "inputSchema" => %{"json" => params}
+            }
+          }
+
+        %{"toolSpec" => _} = t ->
+          t
+
+        t ->
+          t
+      end)
 
     body = %{
       "modelId" => model,
@@ -29,11 +36,12 @@ defmodule Eai.Adapter.Converse do
       "messages" => converse_messages
     }
 
-    body = if bedrock_tools != [] do
-      Map.put(body, "toolConfig", %{"tools" => bedrock_tools})
-    else
-      body
-    end
+    body =
+      if bedrock_tools != [] do
+        Map.put(body, "toolConfig", %{"tools" => bedrock_tools})
+      else
+        body
+      end
 
     url = "https://bedrock-runtime.#{region}.amazonaws.com/model/#{model}/converse"
 

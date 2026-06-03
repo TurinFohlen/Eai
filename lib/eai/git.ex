@@ -3,10 +3,12 @@ defmodule Eai.Git do
 
   defp shared_repo_path do
     sandbox = Application.fetch_env!(:eai, :sandbox)
+
     case Keyword.get(sandbox, :shared_repo_path) do
       nil ->
         work_dir_root = Keyword.fetch!(sandbox, :work_dir_root)
         Path.join(work_dir_root, "shared.git")
+
       path ->
         path
     end
@@ -14,14 +16,21 @@ defmodule Eai.Git do
 
   def init_shared_repo do
     path = shared_repo_path()
+
     if File.dir?(path) do
       {:ok, :already_exists}
     else
       File.mkdir_p!(Path.dirname(path))
+
       case System.cmd("git", ["init", "--bare", path]) do
         {_, 0} ->
-          File.write!(Path.join(path, "description"), "EAI shared repository for agent collaboration\n")
+          File.write!(
+            Path.join(path, "description"),
+            "EAI shared repository for agent collaboration\n"
+          )
+
           {:ok, :created}
+
         {error, _} ->
           {:error, error}
       end
