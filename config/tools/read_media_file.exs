@@ -1,6 +1,5 @@
 defmodule Eai.Tool.ReadMediaFile do
   @behaviour Eai.Tool
-  alias Eai.Tool.Helpers
 
   @impl true
   def schema do
@@ -42,7 +41,7 @@ defmodule Eai.Tool.ReadMediaFile do
   @impl true
   def execute(args, _pty_session_id, _chat_session_id) do
     file_path  = args["file_path"]
-    work_root  = Helpers.sandbox_cfg(:work_dir_root)
+    work_root  = Application.fetch_env!(:eai, :sandbox) |> Keyword.fetch!(:work_dir_root)
 
     if not String.starts_with?(Path.expand(file_path), Path.expand(work_root)) do
       Jason.encode!(%{ok: false, reason: "file path outside workspace"})

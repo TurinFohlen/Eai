@@ -43,7 +43,7 @@ defmodule Eai.ResultCollector do
     new_buf = buffer <> data
 
     if debug? do
-      Logger.debug("RAW new_buf", task_id: task_id, size: byte_size(new_buf), buffer: inspect(new_buf, binary: :as_buffer))
+      Logger.debug("RAW new_buf", task_id: task_id, size: byte_size(new_buf), buffer: inspect(new_buf))
     else
       Logger.debug("RAW new_buf", task_id: task_id, size: byte_size(new_buf))
     end

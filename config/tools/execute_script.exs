@@ -1,6 +1,5 @@
 defmodule Eai.Tool.ExecuteScript do
   @behaviour Eai.Tool
-  alias Eai.Tool.Helpers
 
   @impl true
   def schema do
@@ -25,7 +24,7 @@ defmodule Eai.Tool.ExecuteScript do
     sid     = Map.get(args, "pty_session_id", pty_session_id)
     script  = Map.get(args, "script", "")
     task_id = "task_#{System.unique_integer([:positive, :monotonic])}"
-    prefix  = Helpers.sandbox_cfg(:script_tmp_prefix)
+    prefix  = Application.fetch_env!(:eai, :sandbox) |> Keyword.fetch!(:script_tmp_prefix)
     path    = "#{prefix}#{task_id}.sh"
 
     with :ok <- File.write(path, script),
@@ -43,7 +42,7 @@ defmodule Eai.Tool.ExecuteScript do
   end
 
   defp debug_script(path, script) do
-    if Helpers.sandbox_cfg(:debug_pty_output) do
+    if Application.fetch_env!(:eai, :sandbox) |> Keyword.fetch!(:debug_pty_output) do
       IO.puts("\n=== SCRIPT START [#{path}] ===\n#{script}\n=== SCRIPT END ===")
     end
     :ok

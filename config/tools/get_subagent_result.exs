@@ -1,6 +1,5 @@
 defmodule Eai.Tool.GetSubagentResult do
   @behaviour Eai.Tool
-  alias Eai.Tool.Helpers
 
   @impl true
   def schema do
@@ -19,7 +18,7 @@ defmodule Eai.Tool.GetSubagentResult do
 
   @impl true
   def execute(args, _pty_session_id, _chat_session_id) do
-    Process.sleep(Helpers.poll_cooldown_ms())
+    Process.sleep(Application.get_env(:eai, :poll_cooldown_ms))
     case args["subagent_task_id"] do
       nil -> Jason.encode!(%{error: "missing subagent_task_id"})
       subagent_task_id ->

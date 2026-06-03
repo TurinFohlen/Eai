@@ -59,48 +59,54 @@ defmodule Eai.LLM.Direct do
 
     %{schemas: schemas} = tools()
 
-    # Convert internal messages to provider wire format
     adapter_opts = [reasoning_effort: effort]
-    req = adapter.to_request_body(messages, model, prompt, schemas, adapter_opts)
-
-    # Use model-configured URL if adapter didn't set one
+    req     = adapter.to_request_body(messages, model, prompt, schemas, adapter_opts)
     req_url = if is_nil(req.url), do: url, else: req.url
+    headers = build_headers(provider, api_key, req.headers)
 
-    # Build headers
-    headers = if req.headers == [] do
-      case provider do
-        :anthropic -> [{"x-api-key", api_key || ""}, {"anthropic-version", "2023-06-01"}, {"content-type", "application/json"}]
-        _ -> [authorization: "Bearer #{api_key || ""}"]
-      end
-    else
-      req.headers
+    execute_request(req_url, req.json_body, headers, timeout, messages, pty_session_id, chat_session_id, opts)
+  end
+
+  defp execute_request(url, json_body, headers, timeout, messages, pty_session_id, chat_session_id, opts) do
+    entry    = resolve_model_entry(opts)
+    provider = Map.get(opts, :provider, entry[:provider] || :openai_compat)
+    adapter  = adapter_for(provider)
+
+    if System.get_env("EAI_DEBUG_LLM_REQUEST") == "1" do
+      require Logger
+      Logger.debug("LLM request body", body: inspect(json_body, limit: :infinity, pretty: true))
     end
 
     start_time = System.monotonic_time(:millisecond)
-    :telemetry.execute([:eai, :llm, :request, :start], %{system_time: System.system_time()}, %{pty_session_id: pty_session_id})
+    :telemetry.execute([:eai, :llm, :request, :start], %{system_time: System.system_time()},
+      %{pty_session_id: pty_session_id})
 
-    result = Req.post(req_url,
-      json: req.json_body,
-      headers: headers,
-      receive_timeout: timeout
-    )
-
+    result = Req.post(url, json: json_body, headers: headers, receive_timeout: timeout)
     duration = System.monotonic_time(:millisecond) - start_time
 
+    handle_http_result(result, duration, messages, pty_session_id, chat_session_id, adapter, opts)
+  end
+
+  defp handle_http_result(result, duration, messages, pty_session_id, chat_session_id, adapter, opts) do
     case result do
       {:ok, %{status: 200, body: resp_body}} ->
-        :telemetry.execute([:eai, :llm, :request, :stop], %{duration_ms: duration}, %{pty_session_id: pty_session_id, status: :ok})
+        :telemetry.execute([:eai, :llm, :request, :stop], %{duration_ms: duration},
+          %{pty_session_id: pty_session_id, status: :ok})
         assistant_msg = adapter.from_response(resp_body)
         handle_response(assistant_msg, messages, pty_session_id, chat_session_id, opts)
 
       {:ok, %{status: status, body: body}} ->
-        :telemetry.execute([:eai, :llm, :request, :stop], %{duration_ms: duration}, %{pty_session_id: pty_session_id, status: :error})
-        :telemetry.execute([:eai, :llm, :request, :error], %{duration_ms: duration}, %{pty_session_id: pty_session_id, reason: "HTTP #{status}", body: inspect(body)})
+        :telemetry.execute([:eai, :llm, :request, :stop], %{duration_ms: duration},
+          %{pty_session_id: pty_session_id, status: :error})
+        :telemetry.execute([:eai, :llm, :request, :error], %{duration_ms: duration},
+          %{pty_session_id: pty_session_id, reason: "HTTP #{status}", body: inspect(body)})
         {:error, "HTTP #{status}: #{inspect(body)}", messages}
 
       {:error, reason} ->
-        :telemetry.execute([:eai, :llm, :request, :stop], %{duration_ms: duration}, %{pty_session_id: pty_session_id, status: :error})
-        :telemetry.execute([:eai, :llm, :request, :error], %{duration_ms: duration}, %{pty_session_id: pty_session_id, reason: inspect(reason)})
+        :telemetry.execute([:eai, :llm, :request, :stop], %{duration_ms: duration},
+          %{pty_session_id: pty_session_id, status: :error})
+        :telemetry.execute([:eai, :llm, :request, :error], %{duration_ms: duration},
+          %{pty_session_id: pty_session_id, reason: inspect(reason)})
         {:error, reason, messages}
     end
   end
@@ -110,15 +116,11 @@ defmodule Eai.LLM.Direct do
   defp handle_response(assistant_msg, history, pty_session_id, chat_session_id, opts) do
     history = history ++ [assistant_msg]
 
-    cond do
-      # Has tool_use blocks → execute tools and recurse
-      Message.has_tool_uses?(assistant_msg) ->
-        handle_tool_calls(assistant_msg, history, pty_session_id, chat_session_id, opts)
-
-      # Pure text response → done
-      true ->
-        text = Message.text(assistant_msg)
-        {:ok, Eai.Utils.sanitize_value(text), history}
+    if Message.has_tool_uses?(assistant_msg) do
+      handle_tool_calls(assistant_msg, history, pty_session_id, chat_session_id, opts)
+    else
+      text = Message.text(assistant_msg)
+      {:ok, Eai.Utils.sanitize_value(text), history}
     end
   end
 
@@ -197,4 +199,20 @@ defmodule Eai.LLM.Direct do
   defp adapter_for(:openai_compat), do: Eai.Adapter.OpenAI
   defp adapter_for(:converse),      do: Eai.Adapter.Converse
   defp adapter_for(_),              do: Eai.Adapter.OpenAI
+
+  # ── Header construction ──────────────────────────────────────────────
+
+  defp build_headers(_provider, _api_key, headers) when headers != [], do: headers
+
+  defp build_headers(:anthropic, api_key, []) do
+    [
+      {"x-api-key", api_key || ""},
+      {"anthropic-version", "2023-06-01"},
+      {"content-type", "application/json"}
+    ]
+  end
+
+  defp build_headers(_provider, api_key, []) do
+    [authorization: "Bearer #{api_key || ""}"]
+  end
 end

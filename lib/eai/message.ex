@@ -90,8 +90,7 @@ defmodule Eai.Message do
   def text(%{content: blocks}) do
     blocks
     |> Enum.filter(&match?({:text, _}, &1))
-    |> Enum.map(fn {:text, t} -> t end)
-    |> Enum.join("\n\n")
+    |> Enum.map_join("\n\n", fn {:text, t} -> t end)
   end
 
   @doc """
@@ -194,6 +193,5 @@ defmodule Eai.Message do
   defp block_from_json_map(other) do
     {:text, "unexpected block: #{inspect(other)}"}
   end
-
 
 end

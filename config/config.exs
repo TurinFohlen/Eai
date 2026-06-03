@@ -1,5 +1,15 @@
 import Config
 
+# ── Logger 元数据键声明 ───────────────────────────────────────────────────────
+config :logger, :console,
+  metadata: [
+    :pty_session_id, :task_id, :current_task, :pty, :msg,
+    :priv_src, :src, :link, :reason, :state,
+    :output_bytes, :size, :buffer, :duration_ms,
+    :event, :label, :measurements, :metadata,
+    :body
+  ]
+
 # ── 模型注册表（统一在 models.exs 管理）──────────────────────────────────────
 import_config "models.exs"
 

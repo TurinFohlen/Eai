@@ -1,4 +1,6 @@
 defmodule Eai.Adapter.Converse do
+  @moduledoc "AWS Bedrock Converse API wire format adapter."
+
   @behaviour Eai.Adapter
   require Logger
   alias Eai.Message

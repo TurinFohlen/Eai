@@ -17,7 +17,7 @@ defmodule Eai.Adapter do
               system_prompt :: String.t(),
               tools :: [map()],
               opts :: keyword()
-            ) :: %{url: String.t(), headers: [{String.t(), String.t()}], json_body: map()}
+            ) :: %{url: String.t() | nil, headers: list(), json_body: map()}
 
   @doc """
   Parse a provider-specific API response body into an Eai.Message (assistant).

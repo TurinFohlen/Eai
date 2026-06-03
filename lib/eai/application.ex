@@ -1,4 +1,6 @@
 defmodule Eai.Application do
+  @moduledoc false
+
   use Application
 
   def start(_type, _args) do
@@ -6,7 +8,7 @@ defmodule Eai.Application do
 
     children =
       if Application.get_env(:eai, :start_application, true) do
-        IO.puts("ℹ️  EAI started. Type Eai.help() for full documentation.\n")
+        IO.puts("ℹ️  EAI started.\n")
         [
           {Phoenix.PubSub, name: Eai.Naming.pubsub()},
           Eai.Cache.Cache,

@@ -12,6 +12,6 @@ defmodule Eai.Tool.GetLocalTime do
 
   @impl true
   def execute(_args, _pty_session_id, _chat_session_id) do
-    DateTime.utc_now() |> DateTime.to_iso8601()
+    Jason.encode!(%{utc_time: DateTime.utc_now() |> DateTime.to_iso8601()})
   end
 end

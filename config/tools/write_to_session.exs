@@ -1,6 +1,5 @@
 defmodule Eai.Tool.WriteToSession do
   @behaviour Eai.Tool
-  alias Eai.Tool.Helpers
 
   @right_sentinel Application.compile_env(:eai, [:sandbox, :sentinel_right])
 
@@ -41,7 +40,7 @@ defmodule Eai.Tool.WriteToSession do
     input  = Map.get(args, "input", "")
     target = Map.get(args, "pty_session_id", pty_session_id)
     raw    = unescape(input)
-    if Helpers.sandbox_cfg(:debug_pty_output) do
+    if Application.fetch_env!(:eai, :sandbox) |> Keyword.fetch!(:debug_pty_output) do
       IO.puts("\n=== WRITE_TO_SESSION [#{target}] ===\ninput: #{inspect(input)}\nraw:   #{inspect(raw)}\n=== END WRITE ===")
     end
     Eai.Naming.pool().write_raw(target, raw)

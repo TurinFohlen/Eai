@@ -1,11 +1,14 @@
 defmodule Eai.Chat do
+  @moduledoc "Main conversation GenServer managing multi-session chat history and async LLM tasks."
+
   use GenServer
   require Logger
+  alias Eai.Adapter.Anthropic, as: AdapterAnthropic
+  alias Eai.Adapter.OpenAI, as: AdapterOpenAI
   alias Eai.LLM.Direct
+  alias Eai.Message
   alias Eai.ResultCollector
   alias Eai.Utils
-  alias Eai.Message
-
   # ── 客户端 API ───────────────────────────────────────────────────
 
   @doc """
@@ -152,14 +155,7 @@ defmodule Eai.Chat do
         cond do
           trimmed == "/s" ->
             message = Enum.join(Enum.reverse(lines), "\n")
-
-            if String.trim(message) == "" do
-              IO.puts("No message to send. Starting over.")
-              read_lines(timeout, model_opt, prompt_opt, chat_session, [])
-            else
-              GenServer.cast(Eai.Naming.chat(), {:talk_async, message, timeout, model_opt, prompt_opt, chat_session})
-              IO.puts("Task submitted. Use Eai.Chat.interrupt!(\"#{chat_session}\") to stop it.")
-            end
+            submit_or_restart(message, timeout, model_opt, prompt_opt, chat_session)
 
           trimmed == "/c" ->
             IO.puts("Cancelled.")
@@ -167,6 +163,16 @@ defmodule Eai.Chat do
           true ->
             read_lines(timeout, model_opt, prompt_opt, chat_session, [trimmed | lines])
         end
+    end
+  end
+
+  defp submit_or_restart(message, timeout, model_opt, prompt_opt, chat_session) do
+    if String.trim(message) == "" do
+      IO.puts("No message to send. Starting over.")
+      read_lines(timeout, model_opt, prompt_opt, chat_session, [])
+    else
+      GenServer.cast(Eai.Naming.chat(), {:talk_async, message, timeout, model_opt, prompt_opt, chat_session})
+      IO.puts("Task submitted. Use Eai.Chat.interrupt!(\"#{chat_session}\") to stop it.")
     end
   end
 
@@ -189,9 +195,7 @@ defmodule Eai.Chat do
   @impl true
   def handle_call({:talk, text, timeout, model_opt, prompt_opt, chat_session_id}, from, state) do
     session = get_session(state, chat_session_id)
-    if not is_nil(session.task_ref) do
-      {:reply, {:error, :busy, "Another task is running in session '#{chat_session_id}'."}, state}
-    else
+    if is_nil(session.task_ref) do
       sanitized    = Utils.sanitize_value(text)
       user_msg     = Message.new(:user, sanitized)
       new_messages = session.messages ++ [user_msg]
@@ -210,6 +214,8 @@ defmodule Eai.Chat do
       new_state   = state |> put_session(chat_session_id, new_session) |> put_ref(task.ref, chat_session_id)
 
       {:noreply, new_state}
+    else
+      {:reply, {:error, :busy, "Another task is running in session '#{chat_session_id}'."}, state}
     end
   end
 
@@ -418,11 +424,11 @@ defmodule Eai.Chat do
   end
 
   defp convert_imported_messages(raw_messages, "openai") do
-    Eai.Adapter.OpenAI.from_messages(raw_messages)
+    AdapterOpenAI.from_messages(raw_messages)
   end
 
   defp convert_imported_messages(raw_messages, "anthropic") do
-    Eai.Adapter.Anthropic.from_messages(raw_messages)
+    AdapterAnthropic.from_messages(raw_messages)
   end
 
   defp convert_imported_messages(raw_messages, _unknown) do

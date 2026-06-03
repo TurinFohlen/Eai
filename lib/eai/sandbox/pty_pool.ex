@@ -1,4 +1,6 @@
 defmodule Eai.Sandbox.PTYPool do
+  @moduledoc "GenServer pool managing per-session PTY processes and task dispatching."
+
   @behaviour Eai.Sandbox
 
   use GenServer
@@ -14,7 +16,7 @@ defmodule Eai.Sandbox.PTYPool do
 
   def exec_async(pty_session_id, cmd, task_id \\ nil) do
     task_id = task_id || "task_#{System.unique_integer([:positive, :monotonic])}"
-    GenServer.call(Eai.Naming.pool(), {:exec, pty_session_id, task_id, cmd}, 15_000)  
+    GenServer.call(Eai.Naming.pool(), {:exec, pty_session_id, task_id, cmd}, 15_000)
   end
 
   def force_reset(pty_session_id) do
@@ -218,21 +220,9 @@ defmodule Eai.Sandbox.PTYPool do
         work_dir  = "#{work_root}/#{pty_session_id}"
         File.mkdir_p!(work_dir)
 
-        priv_src = sandbox_cfg(:priv_src)
+        priv_src  = sandbox_cfg(:priv_src)
         priv_link = Path.join(work_dir, "priv")
-        cond do
-          priv_src && File.exists?(priv_src) && !File.exists?(priv_link) ->
-            case File.ln_s(priv_src, priv_link) do
-              :ok ->
-                Logger.info("PTYPool priv symlink created", pty_session_id: pty_session_id, src: priv_src, link: priv_link)
-              {:error, reason} ->
-                Logger.warning("PTYPool priv symlink failed", pty_session_id: pty_session_id, reason: reason)
-            end
-          File.exists?(priv_link) ->
-            :ok
-          true ->
-            Logger.warning("PTYPool priv src not found, skip symlink", pty_session_id: pty_session_id, priv_src: priv_src)
-        end
+        maybe_link_priv(pty_session_id, priv_src, priv_link)
 
         shell = System.find_executable("bash") || "/bin/sh"
         cols  = sandbox_cfg(:pty_cols)
@@ -273,6 +263,35 @@ defmodule Eai.Sandbox.PTYPool do
 
       %{pty: pty} ->
         {pty, sessions}
+    end
+  end
+
+  defp maybe_link_priv(_id, priv_src, _priv_link) when is_nil(priv_src) do
+    Logger.warning("PTYPool priv src not found, skip symlink")
+  end
+
+  defp maybe_link_priv(_id, _priv_src, priv_link) when not is_nil(priv_link) do
+    if File.exists?(priv_link), do: :ok
+  end
+
+  defp maybe_link_priv(pty_session_id, priv_src, priv_link) do
+    cond do
+      File.exists?(priv_link) ->
+        :ok
+
+      File.exists?(priv_src) ->
+        case File.ln_s(priv_src, priv_link) do
+          :ok ->
+            Logger.info("PTYPool priv symlink created",
+              pty_session_id: pty_session_id, src: priv_src, link: priv_link)
+          {:error, reason} ->
+            Logger.warning("PTYPool priv symlink failed",
+              pty_session_id: pty_session_id, reason: reason)
+        end
+
+      true ->
+        Logger.warning("PTYPool priv src not found, skip symlink",
+          pty_session_id: pty_session_id, priv_src: priv_src)
     end
   end
 end

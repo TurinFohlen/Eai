@@ -156,7 +156,19 @@ defmodule Eai do
   """
 
   def help(topic \\ :all)
-  def help(:all),                                   do: (IO.puts(@user_guide);  :ok)
-  def help(t) when t in [:architecture, "architecture"], do: (IO.puts(@arch_doc); :ok)
-  def help(_), do: (IO.puts("未知主题。可用：Eai.help() / Eai.help(:architecture)"); :error)
+
+  def help(:all) do
+    IO.puts(@user_guide)
+    :ok
+  end
+
+  def help(t) when t in [:architecture, "architecture"] do
+    IO.puts(@arch_doc)
+    :ok
+  end
+
+  def help(_) do
+    IO.puts("未知主题。可用：Eai.help() / Eai.help(:architecture)")
+    :error
+  end
 end

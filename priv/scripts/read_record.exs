@@ -48,7 +48,8 @@ defmodule ReadRecord do
     if opts[:json] do
       records
       |> Enum.map(&sanitize_for_json/1)
-      |> IO.puts(Jason.encode!(data, pretty: true))
+      |> Jason.encode!(pretty: true)
+      |> IO.puts()
     else
       IO.puts("=== Found #{length(records)} record(s) ===\n")
       records

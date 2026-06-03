@@ -1,4 +1,6 @@
 defmodule Eai.Record do
+  @moduledoc "GenServer for background persistence of conversation history to compressed logs."
+
   use GenServer
   alias Eai.Utils
 

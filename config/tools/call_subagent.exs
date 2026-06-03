@@ -32,7 +32,7 @@ defmodule Eai.Tool.CallSubagent do
     Task.start(fn ->
       opts = [
         pty_session_id: pty_session_id,
-        chat_session_id: "default"
+        chat_session_id: "subagent_#{subagent_task_id}"
       ]
       opts = if model_opt, do: Keyword.put(opts, :model, String.to_atom(model_opt)), else: opts
       opts = if prompt_opt, do: Keyword.put(opts, :prompt, String.to_atom(prompt_opt)), else: opts

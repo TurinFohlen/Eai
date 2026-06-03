@@ -1,26 +1,33 @@
 defmodule Eai.Adapter.OpenAI do
+  @moduledoc "OpenAI-compatible wire format adapter (also used for DeepSeek and similar providers)."
+
   @behaviour Eai.Adapter
   require Logger
   alias Eai.Message
+@impl true
+def to_request_body(messages, model, system_prompt, tools, opts) do
+  effort = Keyword.get(opts, :reasoning_effort)
 
-  @impl true
-  def to_request_body(messages, model, system_prompt, tools, _opts) do
-    openai_messages =
-      [%{role: "system", content: system_prompt} |
-       Enum.flat_map(messages, &message_to_openai/1)]
+  openai_messages =
+    [%{"role" => "system", "content" => system_prompt} |
+     Enum.flat_map(messages, &message_to_openai/1)]
 
-    body = %{
-      model: model,
-      messages: openai_messages,
-      tools: tools,
-      tool_choice: "auto",
-      stream: false
-    }
+  body = %{
+    model: model,
+    messages: openai_messages,
+    tools: tools,
+    tool_choice: "auto",
+    stream: false
+  }
 
-    # Note: URL/headers are populated by the caller using model config
-    %{url: nil, headers: [], json_body: body}
+  body = if effort do
+    Map.put(body, :reasoning_effort, effort)
+  else
+    body
   end
 
+  %{url: nil, headers: [], json_body: body}
+end
 @impl true
 def from_response(%{"choices" => [%{"message" => msg} | _]}) do
   content = msg["content"]
@@ -48,18 +55,7 @@ def from_response(%{"choices" => [%{"message" => msg} | _]}) do
   # 3. 工具调用 → :tool_use 块
   blocks =
     if is_list(tool_calls) and tool_calls != [] do
-      Enum.map(tool_calls, fn tc ->
-        args = case tc["function"]["arguments"] do
-          s when is_binary(s) -> Jason.decode!(s)
-          m when is_map(m) -> m
-          _ -> %{}
-        end
-        {:tool_use, [
-          tool_use_id: tc["id"],
-          name: tc["function"]["name"],
-          input: args
-        ]}
-      end) ++ blocks
+      Enum.map(tool_calls, &tool_call_to_block/1) ++ blocks
     else
       blocks
     end
@@ -90,17 +86,27 @@ end
 
   # ── Private ──────────────────────────────────────────────────────────
 
+  defp tool_call_to_block(tc) do
+    args = decode_tool_args(tc["function"]["arguments"])
+    {:tool_use, [tool_use_id: tc["id"], name: tc["function"]["name"], input: args]}
+  end
+
+  defp decode_tool_args(s) when is_binary(s), do: Jason.decode!(s)
+  defp decode_tool_args(m) when is_map(m),    do: m
+  defp decode_tool_args(_),                   do: %{}
+
   defp message_to_openai(%{role: :user, content: blocks}) do
     {user_blocks, tool_results} = split_blocks(blocks)
 
     msgs = []
 
-    # User message with text/image blocks
+    # Only add a user message when there is actual user content.
+    # Pure tool-result messages must NOT have a preceding empty user turn —
+    # OpenAI requires assistant(tool_calls) → tool(results) with nothing in between.
     msgs = if user_blocks != [] do
       msgs ++ [%{"role" => "user", "content" => blocks_to_openai_content(user_blocks)}]
     else
-      # Must have a user message even if empty (OpenAI requires alternating)
-      msgs ++ [%{"role" => "user", "content" => ""}]
+      msgs
     end
 
     # Tool results as separate role: "tool" messages
@@ -120,7 +126,10 @@ end
 
     text_content =
       text_blocks
-      |> Enum.map(fn {:text, t} -> t; {:thinking, t} -> "[thinking] #{t}" end)
+      |> Enum.flat_map(fn
+        {:text, t}     -> [t]
+        {:thinking, _} -> []
+      end)
       |> Enum.join("\n")
 
     msg = %{
@@ -139,9 +148,9 @@ end
           }
         }
       end)
-      Map.put(msg, "tool_calls", tool_calls)
+      [Map.put(msg, "tool_calls", tool_calls)]
     else
-      msg
+      [msg]
     end
   end
 
@@ -160,26 +169,22 @@ end
   end
 
   defp blocks_to_openai_content(blocks) do
-    if Enum.all?(blocks, &(match?({:text, _}, &1) or match?({:thinking, _}, &1))) do
-      # Pure text: serialize as string
-      blocks
-      |> Enum.map(fn {:text, t} -> t; {:thinking, t} -> "[thinking] #{t}" end)
-      |> Enum.join("\n")
+    visible = Enum.reject(blocks, &match?({:thinking, _}, &1))
+
+    if Enum.all?(visible, &match?({:text, _}, &1)) do
+      visible
+      |> Enum.map_join("\n", fn {:text, t} -> t end)
     else
-      # Mixed content: content array
-      Enum.map(blocks, fn
-        {:thinking, t} ->
-          %{"type" => "text", "text" => "[thinking] #{t}"}
+      Enum.flat_map(visible, fn
         {:text, t} ->
-          %{"type" => "text", "text" => t}
+          [%{"type" => "text", "text" => t}]
         {:image, kw} ->
           format = kw[:format]
-          mime = "image/#{format}"
           {:bytes, data} = kw[:source]
-          %{
+          [%{
             "type" => "image_url",
-            "image_url" => %{"url" => "data:#{mime};base64,#{data}"}
-          }
+            "image_url" => %{"url" => "data:image/#{format};base64,#{data}"}
+          }]
       end)
     end
   end
@@ -188,8 +193,7 @@ end
   defp tool_result_to_text(blocks) when is_list(blocks) do
     blocks
     |> Enum.filter(&match?({:text, _}, &1))
-    |> Enum.map(fn {:text, t} -> t end)
-    |> Enum.join("\n")
+    |> Enum.map_join("\n", fn {:text, t} -> t end)
   end
 
   defp message_from_openai_user(content) when is_binary(content) do

@@ -1,4 +1,6 @@
 defmodule Eai.Adapter.Anthropic do
+  @moduledoc "Anthropic Messages API wire format adapter."
+
   @behaviour Eai.Adapter
   require Logger
 
