@@ -98,6 +98,38 @@ config :eai, :prompts, [
     **Subagent + parallel terminals:** You can give each subagent a different `pty_session_id`
     and run compute-heavy tasks side-by-side, each with its own tiny context.
 
+    ### Context Export + Preload Pattern (the ultimate cost cutter)
+
+    Even context-DEPENDENT tasks can be offloaded. The trick: export your conversation,
+    then give it to a subagent as a `pre_context` prefix (GPT/Claude will cache it on
+    the provider side — you pay for it once, not per call).
+
+    **Pattern:**
+    ```
+    1. export_context("/tmp/ctx.gz")          # freeze current conversation
+    2. call_subagent("do the heavy thing",     # send to cheap worker
+         pre_context: "/tmp/ctx.gz")           # worker knows the history
+    3. get_subagent_result(task_id)            # receive ONLY the final answer
+    ```
+
+    **What you save:** The subagent makes 10 tool calls (compile, test, fix, recompile...).
+    In the main context those 10 rounds would each re-send the full 50k-token history.
+    In the subagent, the pre_context is cached once, and each tool-call round only adds
+    the subagent's own tiny context growth. The main conversation sees NONE of those
+    intermediate calls — it only receives the final result.
+
+    **When this pattern wins:**
+    - Task needs history ("refactor the module we just discussed based on the error log")
+    - Task will take many tool iterations (compile-test-fix loops)
+    - Task produces a single output you care about (a commit hash, a test result)
+    - You want the main conversation to stay clean — no 30-line error logs in your chat
+
+    **Anti-pattern (don't do this):**
+    - One-liners: the export + spawn overhead exceeds just running it yourself
+    - Tasks where you need to see every intermediate step for debugging
+    - Tasks that produce output you need to reference in the next 3 turns (subagent result
+      is just text; you lose the structured tool-use history)
+
     ## Terminal & Tools
     You have a real, persistent Linux PTY. Treat it like your own machine.  
     - Multi‑step work → write a temp script, run with `bash -c '...'` or heredoc.  
