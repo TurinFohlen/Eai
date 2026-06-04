@@ -8,9 +8,13 @@ defmodule Eai.Tool.ForceCompleteTask do
       function: %{
         name: "force_complete_task",
         description: """
-        Force-collect the current output of a running task and mark it as complete.
-        Use when a task appears stuck but has produced output you want to retrieve.
-        Always call list_pty_sessions first to confirm the task_id.
+        Force-collect output from a running/stuck task and mark it complete.
+        Use when a task hangs but has produced partial output you want to recover.
+        Always call list_pty_sessions first to confirm the task_id exists.
+
+        This is a last-resort tool — prefer adjusting poll_cooldown_ms via set_config
+        and waiting patiently. force_complete extracts whatever is in the buffer;
+        the output may be incomplete.
         """,
         parameters: %{
           type: "object",

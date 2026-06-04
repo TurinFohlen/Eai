@@ -8,13 +8,26 @@ defmodule Eai.Tool.GetTaskResult do
       function: %{
         name: "get_task_result",
         description: """
-        Retrieve the output of a previously submitted script by task_id.
-        Poll until status == 'complete'. Wait at least 5 s after execute_script before first poll.
+        Poll for output of a script submitted via execute_script.
+        Returns running/completed/not_found status. Wait ≥5 s after execute_script
+        before first poll. Keep calling until status == "complete".
 
-        **Performance note:** This tool internally calls `Process.sleep(poll_cooldown_ms)`
-        before every poll. If tasks feel sluggish, use `set_config` to lower `poll_cooldown_ms`
-        (default 2000 ms). The round-trip latency you experience is dominated by:
-        (1) LLM HTTP request time, (2) PTY execution time, (3) poll_cooldown_ms sleep.
+        **Token economics:** Every call to this tool is a FULL LLM API roundtrip —
+        the entire conversation context is re-sent to the model each time. A 50k-token
+        context polled 60 times = 3 million tokens = real money. Minimize unnecessary polls.
+
+        **Cooldown tuning (set_config poll_cooldown_ms):**
+        - Trivial tasks (echo, pwd, date):   500 ms   — poll fast
+        - Normal tasks (compile, git, grep): 2000 ms  — default, balanced
+        - Heavy tasks (deps.get, large ops): 10000 ms — poll sparingly
+        - Long tasks (docker, pip install):  30000-60000 ms — heartbeat subscription
+
+        **Heartbeat Subscription pattern:** For a 60-second task, do NOT poll every
+        2 seconds (30 roundtrips). Instead set poll_cooldown_ms=30000 and poll 2-3
+        times total. Same result, 10× cheaper in token cost.
+
+        **Adaptive tuning:** Raise cooldown before heavy tasks, lower it after.
+        Use set_config freely — changes take effect immediately, node-wide.
         """,
         parameters: %{
           type: "object",

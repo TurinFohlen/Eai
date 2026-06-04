@@ -9,6 +9,9 @@ defmodule Eai.Tool.ResetSession do
         name: "reset_session",
         description: """
         Force-kill a stuck or unresponsive PTY session.
+        After reset, the next execute_script will auto-create a fresh session.
+        Always call list_pty_sessions first to confirm the pty_session_id.
+        """
         Always call list_pty_sessions first to identify the correct pty_session_id.
         After reset, the next execute_script will automatically create a fresh session.
         """,

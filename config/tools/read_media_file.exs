@@ -99,7 +99,10 @@ defmodule Eai.Tool.ReadMediaFile do
                frame_time,
                "--type",
                media_type
-             ], stderr_to_stdout: false, timeout: 30_000) do
+             ],
+             stderr_to_stdout: false,
+             timeout: 30_000
+           ) do
         {output, 0} ->
           case Jason.decode(output) do
             {:ok, %{"ok" => true} = media} ->

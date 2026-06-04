@@ -8,7 +8,10 @@ defmodule Eai.Tool.ReplaceContext do
       function: %{
         name: "replace_context",
         description: """
-        Replace the current conversation history with the content of a previously exported .gz file.
+        Replace the current conversation history with the content of a
+        previously exported .gz file. Supports converse/openai/anthropic formats.
+        Used to restore context from backup or to inject pre-loaded history.
+        """
 
         The format parameter tells the system how to interpret the stored messages:
         - \"converse\" (default): Messages are in Eai's native Converse-based IR format.

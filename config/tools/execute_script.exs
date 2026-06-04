@@ -9,7 +9,15 @@ defmodule Eai.Tool.ExecuteScript do
         name: "execute_script",
         description: """
         Execute a bash script inside a persistent PTY session.
-        Returns a task_id immediately (async). Use get_task_result to poll for output.
+        Returns a task_id immediately (async). Pair with get_task_result to poll for output.
+
+        **Architecture:** Every execute_script → get_task_result cycle costs one full LLM
+        roundtrip (entire conversation context re-sent to the model). Treat polling as
+        a billable event. Use set_config to tune poll_cooldown_ms per task duration.
+
+        **Parallel terminals:** Use different pty_session_id values to run commands in
+        independent shells simultaneously. Long tasks never block short tasks.
+        list_pty_sessions() shows all active terminals.
         """,
         parameters: %{
           type: "object",
