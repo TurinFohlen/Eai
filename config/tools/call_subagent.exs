@@ -1,24 +1,74 @@
 defmodule Eai.Tool.CallSubagent do
-  @behaviour Eai.Tool
+  @moduledoc """
+  子代理派发工具。支持会话复用和前缀缓存。
+  - 首次调用时创建独立 chat session，可通过 pre_context 加载历史前缀。
+  - 后续通过 chat_session 参数追加消息，复用同一会话历史。
+  - 子代理完成后不自动关闭，需显式调用 close_chat_session 或等待系统回收。
+  """
 
+  @behaviour Eai.Tool
+  require Logger
+
+  @impl true
   def schema do
     %{
       type: "function",
       function: %{
         name: "call_subagent",
-        description: "Dispatch a sub-task to an independent AI agent...",
+        description: """
+        Dispatch a sub-task to a fresh, independent AI agent with minimal context.
+        The subagent starts with ONLY its system prompt + your message — it does NOT
+        inherit the main conversation history. This makes subagent tool calls ~50× cheaper
+        per round-trip than running the same task in the main context.
+
+        **When to use:** Context-independent work (compilation, file ops, research,
+        benchmarks). Any task you can describe in one sentence without referencing
+        "what we discussed earlier" is a good candidate.
+
+        **When NOT to use:** Trivial one-liners (echo, pwd) — spawn overhead > savings.
+        Tasks that need conversation context ("continue what I was doing").
+
+        Supports session reuse via `chat_session`, prefix caching via `pre_context`,
+        and prompt/model selection. Use `close_chat_session` when done.
+        Poll results with `get_subagent_result` (same poll_cooldown_ms cost model).
+        """,
         parameters: %{
           type: "object",
           properties: %{
-            message: %{type: "string", description: "The task or question for the sub-agent."},
-            pty_session_id: %{type: "string", description: "Optional PTY session ID."},
+            message: %{
+              type: "string",
+              description: "The task instruction or question for the sub-agent."
+            },
+            chat_session: %{
+              type: "string",
+              description:
+                "Optional. Reuse an existing sub-agent session. If not given, a new session is created."
+            },
+            pre_context: %{
+              type: "string",
+              description: """
+              Optional. Path to an exported history .gzip file to load ONCE when creating a new session.
+              Ignored if the session already exists.
+              Enables LLM prefix caching when the same history is reused across calls.
+              """
+            },
+            format: %{
+              type: "string",
+              description:
+                "Format of the pre_context file ('converse', 'openai', 'anthropic'). Default 'converse'."
+            },
+            pty_session_id: %{
+              type: "string",
+              description:
+                "Optional. PTY session for shell isolation. Defaults to the chat_session ID."
+            },
             model: %{
               type: "string",
               description: "Optional model name (e.g., 'gpt4o', 'claude_sonnet', 'deepseek')."
             },
             prompt: %{
               type: "string",
-              description: "Optional prompt name (e.g., 'coder', 'analyst')."
+              description: "Optional system prompt name (e.g., 'coder', 'analyst')."
             }
           },
           required: ["message"]
@@ -27,13 +77,21 @@ defmodule Eai.Tool.CallSubagent do
     }
   end
 
+  @impl true
   def execute(args, _pty_session_id, _chat_session_id) do
     message = Map.get(args, "message", "")
-    model_opt = Map.get(args, "model")
-    prompt_opt = Map.get(args, "prompt")
+    model_opt = args |> Map.get("model") |> maybe_atom()
+    prompt_opt = args |> Map.get("prompt") |> maybe_atom()
 
-    pty_session_id =
-      Map.get(args, "pty_session_id", "subagent_#{System.unique_integer([:positive])}")
+    pre_context_path = Map.get(args, "pre_context")
+    format_opt = Map.get(args, "format", "converse")
+
+    existing_session = Map.get(args, "chat_session")
+
+    chat_session_id =
+      existing_session || "subagent_#{System.unique_integer([:positive, :monotonic])}"
+
+    pty_session_id = Map.get(args, "pty_session_id", chat_session_id)
 
     subagent_task_id = "satask_#{System.unique_integer([:positive, :monotonic])}"
 
@@ -43,17 +101,33 @@ defmodule Eai.Tool.CallSubagent do
     })
 
     Task.start(fn ->
-      opts = [
-        pty_session_id: pty_session_id,
-        chat_session_id: "subagent_#{subagent_task_id}"
-      ]
-
-      opts = if model_opt, do: Keyword.put(opts, :model, String.to_atom(model_opt)), else: opts
-      opts = if prompt_opt, do: Keyword.put(opts, :prompt, String.to_atom(prompt_opt)), else: opts
-
       result_entry =
         try do
-          case Eai.Chat.send(message, opts) do
+          # pre_context 仅在首次创建（无 existing_session）时加载
+          if is_nil(existing_session) && pre_context_path && File.exists?(pre_context_path) do
+            case Eai.Chat.replace_history(pre_context_path, chat_session_id, format_opt) do
+              {:ok, count} ->
+                Logger.info(
+                  "Subagent pre_context loaded: #{count} messages from #{pre_context_path}"
+                )
+
+              {:error, reason} ->
+                Logger.error("Subagent pre_context load failed: #{reason}")
+            end
+          end
+
+          talk_result =
+            Eai.Chat.talk(
+              content: message,
+              mod: :f,
+              chat_session: chat_session_id,
+              pty_session_id: pty_session_id,
+              model: model_opt,
+              prompt: prompt_opt,
+              timeout: 120_000
+            )
+
+          case talk_result do
             {:ok, response} ->
               %{status: "complete", answer: response, pty_session_id: pty_session_id}
 
@@ -61,14 +135,24 @@ defmodule Eai.Tool.CallSubagent do
               %{status: "error", reason: inspect(reason), pty_session_id: pty_session_id}
           end
         rescue
-          e -> %{status: "error", reason: Exception.message(e), pty_session_id: pty_session_id}
+          e ->
+            Logger.error("Subagent task #{subagent_task_id} crashed: #{Exception.message(e)}")
+            %{status: "error", reason: Exception.message(e), pty_session_id: pty_session_id}
         end
 
       Eai.Naming.cache().put("subagent_result:#{subagent_task_id}", result_entry)
     end)
 
-    %{subagent_task_id: subagent_task_id, status: "queued", pty_session_id: pty_session_id}
+    %{
+      subagent_task_id: subagent_task_id,
+      chat_session: chat_session_id,
+      status: "queued",
+      pty_session_id: pty_session_id
+    }
     |> Eai.Utils.sanitize_value()
     |> Jason.encode!()
   end
+
+  defp maybe_atom(nil), do: nil
+  defp maybe_atom(s), do: String.to_atom(s)
 end
