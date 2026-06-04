@@ -31,25 +31,29 @@ defmodule Eai.Tool.GetTaskResult do
         Jason.encode!(%{error: "missing task_id"})
 
       task_id ->
-        if Eai.ResultCollector.check_and_clear_interrupt_flag(pty_session_id) do
+        if Eai.Task.check_and_clear_interrupt_flag(pty_session_id) do
           Eai.Naming.pool().interrupt_task(pty_session_id)
 
           %{status: "complete", output: "Task forcefully interrupted by user. Please reply now."}
           |> Eai.Utils.sanitize_value()
           |> Jason.encode!()
         else
-          case Eai.ResultCollector.check_timeout_window(pty_session_id) do
+          case Eai.Task.check_timeout_window(pty_session_id) do
             msg when is_binary(msg) ->
               %{status: "complete", output: msg} |> Eai.Utils.sanitize_value() |> Jason.encode!()
 
             _ ->
               result =
-                case Eai.ResultCollector.get(task_id) do
+                case Eai.Task.get(task_id) do
                   %{status: "complete", output: output} ->
                     %{status: "complete", output: output}
 
                   %{started_at: started_at} when not is_nil(started_at) ->
-                    %{status: "running", time: System.monotonic_time(:millisecond) - started_at}
+                    %{
+                      status: "running",
+                      elapsed_ms: System.monotonic_time(:millisecond) - started_at,
+                      suggested_poll_ms: Application.get_env(:eai, :poll_cooldown_ms)
+                    }
 
                   %{} ->
                     %{status: "running", time: 0}

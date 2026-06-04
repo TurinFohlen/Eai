@@ -5,7 +5,7 @@ defmodule Eai.Sandbox.PTYPool do
 
   use GenServer
   require Logger
-  alias Eai.ResultCollector
+  alias Eai.Task
 
   # ── 配置读取 ───────────────────────────────────────────────────────────────
   defp sandbox_cfg(key), do: Application.fetch_env!(:eai, :sandbox) |> Keyword.fetch!(key)
@@ -55,7 +55,7 @@ defmodule Eai.Sandbox.PTYPool do
       {:reply, {:error, :busy}, sessions}
     else
       {pty, sessions} = get_or_create(pty_session_id, sessions)
-      ResultCollector.init_task(task_id)
+      Task.init_task(task_id)
 
       now = System.monotonic_time(:millisecond)
 
@@ -70,8 +70,8 @@ defmodule Eai.Sandbox.PTYPool do
         %{pty_session_id: pty_session_id, task_id: task_id}
       )
 
-      left = ResultCollector.sentinel_left()
-      right = ResultCollector.sentinel_right()
+      left = Task.sentinel_left()
+      right = Task.sentinel_right()
 
       b64_left = Base.encode64(left <> "\n")
       b64_right = Base.encode64("\n" <> right)
@@ -91,7 +91,7 @@ defmodule Eai.Sandbox.PTYPool do
     old_task_id = get_in(sessions, [pty_session_id, :task_id])
 
     if is_binary(old_task_id) do
-      ResultCollector.force_complete(old_task_id)
+      Task.force_complete(old_task_id)
     end
 
     # 2. 杀死 PTY 进程并从池中彻底移除 session
@@ -171,7 +171,7 @@ defmodule Eai.Sandbox.PTYPool do
           ExPTY.write(pty, <<3>>)
 
           # 2. 只 echo 消息 + 右哨兵（左哨兵已经在 PTY 流中）
-          right = ResultCollector.sentinel_right()
+          right = Task.sentinel_right()
           msg = "Task forcefully interrupted by user. Please reply now."
           b64 = Base.encode64(msg <> right)
           cmd = "echo #{b64} | base64 -d\n"
@@ -205,7 +205,7 @@ defmodule Eai.Sandbox.PTYPool do
         )
 
         sessions =
-          case ResultCollector.collect(task_id, data) do
+          case Task.collect(task_id, data) do
             {:complete, output} ->
               duration = System.monotonic_time(:millisecond) - (started_at || 0)
 
