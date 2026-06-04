@@ -10,6 +10,11 @@ defmodule Eai.Tool.GetTaskResult do
         description: """
         Retrieve the output of a previously submitted script by task_id.
         Poll until status == 'complete'. Wait at least 5 s after execute_script before first poll.
+
+        **Performance note:** This tool internally calls `Process.sleep(poll_cooldown_ms)`
+        before every poll. If tasks feel sluggish, use `set_config` to lower `poll_cooldown_ms`
+        (default 2000 ms). The round-trip latency you experience is dominated by:
+        (1) LLM HTTP request time, (2) PTY execution time, (3) poll_cooldown_ms sleep.
         """,
         parameters: %{
           type: "object",

@@ -9,6 +9,13 @@ defmodule Eai.Tool.GetSubagentResult do
         name: "get_subagent_result",
         description: """
         Retrieve the result of a previously dispatched sub-agent task by subagent_task_id.
+        Poll until status == 'complete'. Wait at least 5 s after call_subagent before first poll.
+        
+
+        **Performance note:** Internally sleeps for `poll_cooldown_ms` before each poll
+        (same parameter used by `get_task_result`). Use `set_config` to tune it.
+        
+        Retrieve the result of a previously dispatched sub-agent task by subagent_task_id.
         Poll until status == "complete". Wait at least 5 s after call_subagent before first poll.
         """,
         parameters: %{
@@ -40,7 +47,12 @@ defmodule Eai.Tool.GetSubagentResult do
 
           %{status: status, started_at: started_at} when status not in ["complete", "error"] ->
             elapsed = System.monotonic_time(:millisecond) - started_at
-            Jason.encode!(%{status: "running", time: elapsed})
+
+            Jason.encode!(%{
+              status: "running",
+              elapsed_ms: elapsed,
+              suggested_poll_ms: Application.get_env(:eai, :poll_cooldown_ms)
+            })
 
           result ->
             result |> Eai.Utils.sanitize_value() |> Jason.encode!()
