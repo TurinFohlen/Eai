@@ -206,12 +206,10 @@ defmodule Eai.LLM.Direct do
         # Check for multimodal_inject
         case Jason.decode(content_json) do
           {:ok, %{"type" => "multimodal_inject", "blocks" => blocks}} ->
-            # Convert inject blocks to a new :user message, continue loop
             inject_msg = Message.from_inject_blocks(blocks)
             {[inject_msg | msgs_acc], cont}
 
           {:ok, _} ->
-            # Normal tool result
             result_content = [{:text, content_json}]
             tool_msg = Message.new_tool_result(tool_use_id, result_content)
             {[tool_msg | msgs_acc], cont}
@@ -223,16 +221,73 @@ defmodule Eai.LLM.Direct do
         end
       end)
 
-    # Reverse because we prepended
     new_user_messages = Enum.reverse(new_user_messages)
+    history = dedup_get_task_result_running(history, new_user_messages)
 
     if should_continue? do
       run(history ++ new_user_messages, pty_session_id, opts)
     else
-      # Shouldn't happen, but fallback
       text = Message.text(assistant_msg)
       {:ok, Eai.Utils.sanitize_value(text), history}
     end
+  end
+
+  # ── get_task_result "running" dedup ─────────────────────────────────
+
+
+  # When the LLM polls get_task_result multiple times and gets `status: "running"`,
+  # only the LATEST poll result matters — the elapsed time in older polls is stale.
+  # This function prunes the history: for any new get_task_result tool_result
+  # with status "running", it removes the previous assistant+user pair (the old poll
+  # and its answer) from the history tail, keeping context clean and small.
+  # """
+
+  defp dedup_get_task_result_running(history, new_user_messages) do
+    # Check if any new message is a get_task_result "running" result
+    has_running? = Enum.any?(new_user_messages, fn msg ->
+      msg.role == :user && has_get_task_result_running?(msg)
+    end)
+
+    if has_running? do
+      prune_last_get_task_result_poll(history)
+    else
+      history
+    end
+  end
+
+  defp has_get_task_result_running?(msg) do
+    Enum.any?(msg.content, fn
+      {:tool_result, [tool_use_id: _, content: content]} ->
+        Enum.any?(content, fn
+          {:text, text} ->
+            case Jason.decode(text) do
+              {:ok, %{"status" => "running"}} -> true
+              _ -> false
+            end
+          _ -> false
+        end)
+      _ -> false
+    end)
+  end
+
+  # Prune the last assistant+user pair IF the assistant had a get_task_result
+  # tool_use and the user result was also "running"
+  defp prune_last_get_task_result_poll(history) when length(history) < 2, do: history
+  defp prune_last_get_task_result_poll(history) do
+    {rest, [user_msg, assistant_msg]} = Enum.split(history, -2)
+
+    if has_get_task_result_tool_use?(assistant_msg) and has_get_task_result_running?(user_msg) do
+      rest
+    else
+      history
+    end
+  end
+
+  defp has_get_task_result_tool_use?(msg) do
+    msg.role == :assistant && Enum.any?(msg.content, fn
+      {:tool_use, [tool_use_id: _, name: "get_task_result", input: _]} -> true
+      _ -> false
+    end)
   end
 
   # ── Model / prompt resolution ────────────────────────────────────────
