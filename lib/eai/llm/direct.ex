@@ -222,10 +222,10 @@ defmodule Eai.LLM.Direct do
       end)
 
     new_user_messages = Enum.reverse(new_user_messages)
-    history = dedup_get_task_result_running(history, new_user_messages)
+    all_messages = dedup_stale_running_polls(history ++ new_user_messages)
 
     if should_continue? do
-      run(history ++ new_user_messages, pty_session_id, opts)
+      run(all_messages, pty_session_id, opts)
     else
       text = Message.text(assistant_msg)
       {:ok, Eai.Utils.sanitize_value(text), history}
@@ -242,53 +242,60 @@ defmodule Eai.LLM.Direct do
   # and its answer) from the history tail, keeping context clean and small.
   # """
 
-  defp dedup_get_task_result_running(history, new_user_messages) do
-    # Check if any new message is a get_task_result "running" result
-    has_running? = Enum.any?(new_user_messages, fn msg ->
-      msg.role == :user && has_get_task_result_running?(msg)
-    end)
+  # After tool execution, prune stale "running" poll pairs from history.
+  # Preserves pair atomicity: assistant(tool_calls) + user(tool_result)
+  # are always deleted together. Only the LATEST running pair survives.
 
-    if has_running? do
-      prune_last_get_task_result_poll(history)
-    else
-      history
-    end
-  end
-
-  defp has_get_task_result_running?(msg) do
-    Enum.any?(msg.content, fn
-      {:tool_result, [tool_use_id: _, content: content]} ->
-        Enum.any?(content, fn
-          {:text, text} ->
-            case Jason.decode(text) do
-              {:ok, %{"status" => "running"}} -> true
-              _ -> false
+  defp dedup_stale_running_polls(all_messages) do
+    {clean, _} =
+      all_messages
+      |> Enum.reverse()
+      |> Enum.reduce({[], false}, fn msg, {acc, kept_running} ->
+        case classify_poll_msg(msg) do
+          {:running_user, _tool_use_id} ->
+            if kept_running do
+              {acc, :skip_assistant}
+            else
+              {[msg | acc], true}
             end
-          _ -> false
-        end)
-      _ -> false
-    end)
+
+          :assistant_get_task_result ->
+            if kept_running == :skip_assistant do
+              {acc, false}
+            else
+              {[msg | acc], kept_running}
+            end
+
+          _ ->
+            {[msg | acc], kept_running}
+        end
+      end)
+
+    Enum.reverse(clean)
   end
 
-  # Prune the last assistant+user pair IF the assistant had a get_task_result
-  # tool_use and the user result was also "running"
-  defp prune_last_get_task_result_poll(history) when length(history) < 2, do: history
-  defp prune_last_get_task_result_poll(history) do
-    {rest, [user_msg, assistant_msg]} = Enum.split(history, -2)
+  defp classify_poll_msg(%{role: :user, content: [{:tool_result, kw}]}) do
+    content_str =
+      case kw[:content] do
+        [{:text, t}] -> t
+        _ -> ""
+      end
 
-    if has_get_task_result_tool_use?(assistant_msg) and has_get_task_result_running?(user_msg) do
-      rest
-    else
-      history
+    case Jason.decode(content_str) do
+      {:ok, %{"status" => "running"}} -> {:running_user, kw[:tool_use_id]}
+      _ -> :other
     end
   end
 
-  defp has_get_task_result_tool_use?(msg) do
-    msg.role == :assistant && Enum.any?(msg.content, fn
-      {:tool_use, [tool_use_id: _, name: "get_task_result", input: _]} -> true
+  defp classify_poll_msg(%{role: :assistant, content: content}) do
+    has_gtr = Enum.any?(content, fn
+      {:tool_use, [name: "get_task_result"]} -> true
       _ -> false
     end)
+    if has_gtr, do: :assistant_get_task_result, else: :other
   end
+
+  defp classify_poll_msg(_), do: :other
 
   # ── Model / prompt resolution ────────────────────────────────────────
 
