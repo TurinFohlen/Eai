@@ -11,12 +11,11 @@ defmodule Eai.Tool.ReplaceContext do
         Replace the current conversation history with the content of a
         previously exported .gz file. Supports converse/openai/anthropic formats.
         Used to restore context from backup or to inject pre-loaded history.
-        """
 
         The format parameter tells the system how to interpret the stored messages:
-        - \"converse\" (default): Messages are in Eai's native Converse-based IR format.
-        - \"openai\": Messages are in OpenAI Chat Completions format (with \"role\": \"tool\", \"tool_calls\").
-        - \"anthropic\": Messages are in Anthropic Messages API format.
+        - "converse" (default): Messages are in Eai's native Converse-based IR format.
+        - "openai": Messages are in OpenAI Chat Completions format (with "role": "tool", "tool_calls").
+        - "anthropic": Messages are in Anthropic Messages API format.
         """,
         parameters: %{
           type: "object",

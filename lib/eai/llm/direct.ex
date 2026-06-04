@@ -271,7 +271,7 @@ defmodule Eai.LLM.Direct do
         end
       end)
 
-    Enum.reverse(clean)
+    clean
   end
 
   defp classify_poll_msg(%{role: :user, content: [{:tool_result, kw}]}) do
@@ -288,10 +288,12 @@ defmodule Eai.LLM.Direct do
   end
 
   defp classify_poll_msg(%{role: :assistant, content: content}) do
-    has_gtr = Enum.any?(content, fn
-      {:tool_use, [name: "get_task_result"]} -> true
-      _ -> false
-    end)
+    has_gtr =
+      Enum.any?(content, fn
+        {:tool_use, kw} -> Keyword.get(kw, :name) == "get_task_result"
+        _ -> false
+      end)
+
     if has_gtr, do: :assistant_get_task_result, else: :other
   end
 

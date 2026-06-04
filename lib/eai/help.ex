@@ -10,7 +10,7 @@ defmodule Eai do
     ## 对话入口
     Eai.Chat.talk(content: "msg", mod: :h|:f, model: :deepseek, prompt: :momoka, chat_session: "id", timeout: 30_000)
       返回 {:ok, reply} | {:error, reason}
-    Eai.Chat.send("msg", pty_session_id: "x", chat_session_id: "y", model: :gpt4o, prompt: :coder)
+    Eai.Chat.talk(content: "msg", mod: :f, chat_session: "y", pty_session_id: "x", model: :gpt4o, prompt: :coder)
       返回 {:ok, reply} | {:error, reason}
 
     ## 会话管理
@@ -91,6 +91,9 @@ defmodule Eai do
       {"call_subagent", "%{\"message\"=>\"...\"} -> subagent_task_id", "Eai.Tool.CallSubagent"},
       {"get_subagent_result", "%{\"subagent_task_id\"=>\"...\"} -> 结果",
        "Eai.Tool.GetSubagentResult"},
+      {"set_config",
+       "%{\"key\"=>\"poll_cooldown_ms\", \"value\"=>3000} -> ok | list current values",
+       "Eai.Tool.SetConfig"},
       {"get_local_time", "{} -> UTC ISO8601", "Eai.Tool.GetLocalTime"},
       {"read_media_file", "%{\"file_path\"=>\"...\", \"inject\"=>true, ...} -> 媒体/inject",
        "Eai.Tool.ReadMediaFile"},
