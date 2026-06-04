@@ -30,7 +30,7 @@ defmodule Eai.MixProject do
       # PTY execution
       {:expty, "~> 0.2"},
 
-      # Cache (optional, used by ResultCollector)
+      # Cache (optional, used by Eai.Task)
       {:nebulex, "~> 2.0"},
       {:shards, "~> 1.0"},
       # Record

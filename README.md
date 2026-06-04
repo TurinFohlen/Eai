@@ -89,7 +89,7 @@ Edit config/models.exs:
 
 Architecture (1‑liner)
 
-Eai.Chat → Eai.LLM.Direct (adapter → API) → tool loop → Eai.Sandbox.PTYPool + ResultCollector.
+Eai.Chat → Eai.LLM.Direct (adapter → API) → tool loop → Eai.Sandbox.PTYPool + Eai.Task.
 
 License
 
