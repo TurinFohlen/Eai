@@ -233,8 +233,6 @@ defmodule Eai.LLM.Direct do
   end
 
   # ── get_task_result "running" dedup ─────────────────────────────────
-
-
   # When the LLM polls get_task_result multiple times and gets `status: "running"`,
   # only the LATEST poll result matters — the elapsed time in older polls is stale.
   # This function prunes the history: for any new get_task_result tool_result
@@ -270,7 +268,6 @@ defmodule Eai.LLM.Direct do
             {[msg | acc], kept_running}
         end
       end)
-
     clean
   end
 
