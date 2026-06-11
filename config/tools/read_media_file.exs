@@ -195,12 +195,12 @@ defmodule Eai.Tool.ReadMediaFile do
           Eai.Models.get!(opts[:vision_model])
 
         is_binary(opts[:vision_model]) ->
-          base = Eai.Models.default_vision() || raise "no vision model configured in models.exs"
+          base = Eai.Models.default_vision() || raise "no vision model configured in config/models/"
           Keyword.put(base, :model, opts[:vision_model])
 
         true ->
           Eai.Models.default_vision() ||
-            raise "no vision model configured in models.exs; add vision: true to a model entry"
+            raise "no vision model configured in config/models/; add vision: true to a model entry"
       end
 
     model = entry[:model]

@@ -8,15 +8,23 @@ defmodule Eai.Tool.GetSubagentResult do
       function: %{
         name: "get_subagent_result",
         description: """
-        Retrieve the result of a previously dispatched sub-agent task by subagent_task_id.
-        Poll until status == 'complete'. Wait at least 5 s after call_subagent before first poll.
-        
+        Poll for the result of a sub-agent dispatched via call_subagent.
+        Returns running/completed/error status. Wait ≥5 s after call_subagent
+        before first poll. Keep calling until status == "complete".
 
-        **Performance note:** Internally sleeps for `poll_cooldown_ms` before each poll
-        (same parameter used by `get_task_result`). Use `set_config` to tune it.
-        
-        Retrieve the result of a previously dispatched sub-agent task by subagent_task_id.
-        Poll until status == "complete". Wait at least 5 s after call_subagent before first poll.
+        **Token economics:** Every call to this tool is a FULL LLM API roundtrip —
+        the entire conversation context is re-sent to the model each time. A 50k-token
+        context polled 60 times = 3 million tokens = real money. Minimize unnecessary polls.
+
+        **Cooldown tuning (set_config poll_cooldown_ms):**
+        - Short sub-agents (quick research):  500 ms    — poll fast
+        - Normal sub-agents (analysis):       2000 ms   — default, balanced
+        - Heavy sub-agents (large codebase):  10000 ms  — poll sparingly
+        - Long sub-agents (multi-step):       30000 ms  — heartbeat subscription
+
+        Poll history dedup: only the two most recent "running" polls are preserved
+        in the conversation history. Older running results are automatically pruned
+        to keep context lean. Same mechanism as get_task_result.
         """,
         parameters: %{
           type: "object",

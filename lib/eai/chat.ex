@@ -51,6 +51,7 @@ defmodule Eai.Chat do
     content = Keyword.get(opts, :content)
     model_opt = Keyword.get(opts, :model)
     prompt_opt = Keyword.get(opts, :prompt)
+    chara_card_opt = Keyword.get(opts, :chara_card)
     chat_session = opts |> Keyword.get(:chat_session, "default") |> to_string()
     pty_session = opts |> Keyword.get(:pty_session_id, chat_session) |> to_string()
 
@@ -69,14 +70,14 @@ defmodule Eai.Chat do
               "EAI Chat [#{chat_session}]. Type '/s' on a new line to send your message. Type '/c' on a new line to cancel"
             )
 
-            read_lines(timeout, model_opt, prompt_opt, chat_session, pty_session, [])
+            read_lines(timeout, model_opt, prompt_opt, chara_card_opt, chat_session, pty_session, [])
             :ok
         end
 
       {m, msg} when not is_nil(msg) and m in [:f, :function, :h, :human] ->
         GenServer.call(
           Eai.Naming.chat(),
-          {:talk, msg, timeout, model_opt, prompt_opt, chat_session, pty_session},
+          {:talk, msg, timeout, model_opt, prompt_opt, chara_card_opt, chat_session, pty_session},
           :infinity
         )
 
@@ -136,7 +137,7 @@ defmodule Eai.Chat do
 
   # ── 私有：多行读取循环 ──────────────────────────────────────────
 
-  defp read_lines(timeout, model_opt, prompt_opt, chat_session, pty_session, lines) do
+  defp read_lines(timeout, model_opt, prompt_opt, chara_card_opt, chat_session, pty_session, lines) do
     case IO.gets("> ") do
       :eof ->
         IO.puts("Cancelled.")
@@ -150,27 +151,27 @@ defmodule Eai.Chat do
         cond do
           trimmed == "/s" ->
             message = Enum.join(Enum.reverse(lines), "\n")
-            submit_or_restart(message, timeout, model_opt, prompt_opt, chat_session, pty_session)
+            submit_or_restart(message, timeout, model_opt, prompt_opt, chara_card_opt, chat_session, pty_session)
 
           trimmed == "/c" ->
             IO.puts("Cancelled.")
 
           true ->
-            read_lines(timeout, model_opt, prompt_opt, chat_session, pty_session, [
+            read_lines(timeout, model_opt, prompt_opt, chara_card_opt, chat_session, pty_session, [
               trimmed | lines
             ])
         end
     end
   end
 
-  defp submit_or_restart(message, timeout, model_opt, prompt_opt, chat_session, pty_session) do
+  defp submit_or_restart(message, timeout, model_opt, prompt_opt, chara_card_opt, chat_session, pty_session) do
     if String.trim(message) == "" do
       IO.puts("No message to send. Starting over.")
-      read_lines(timeout, model_opt, prompt_opt, chat_session, pty_session, [])
+      read_lines(timeout, model_opt, prompt_opt, chara_card_opt, chat_session, pty_session, [])
     else
       GenServer.cast(
         Eai.Naming.chat(),
-        {:talk_async, message, timeout, model_opt, prompt_opt, chat_session, pty_session}
+        {:talk_async, message, timeout, model_opt, prompt_opt, chara_card_opt, chat_session, pty_session}
       )
 
       IO.puts("Task submitted. Use Eai.Chat.interrupt!(\"#{chat_session}\") to stop it.")
@@ -196,7 +197,7 @@ defmodule Eai.Chat do
 
   @impl true
   def handle_call(
-        {:talk, text, timeout, model_opt, prompt_opt, chat_session_id, pty_session_id},
+        {:talk, text, timeout, model_opt, prompt_opt, chara_card_opt, chat_session_id, pty_session_id},
         from,
         state
       ) do
@@ -206,7 +207,7 @@ defmodule Eai.Chat do
       sanitized = Utils.sanitize_value(text)
       user_msg = Message.new(:user, sanitized)
       new_messages = session.messages ++ [user_msg]
-      run_opts = build_run_opts(model_opt, prompt_opt, chat_session_id)
+      run_opts = build_run_opts(model_opt, prompt_opt, chara_card_opt, chat_session_id)
 
       task = Task.async(fn -> Direct.run(new_messages, pty_session_id, run_opts) end)
       Process.unlink(task.pid)
@@ -326,14 +327,14 @@ defmodule Eai.Chat do
 
   @impl true
   def handle_cast(
-        {:talk_async, text, timeout, model_opt, prompt_opt, chat_session_id, pty_session_id},
+        {:talk_async, text, timeout, model_opt, prompt_opt, chara_card_opt, chat_session_id, pty_session_id},
         state
       ) do
     session = get_session(state, chat_session_id)
     sanitized = Utils.sanitize_value(text)
     user_msg = Message.new(:user, sanitized)
     new_messages = session.messages ++ [user_msg]
-    run_opts = build_run_opts(model_opt, prompt_opt, chat_session_id)
+    run_opts = build_run_opts(model_opt, prompt_opt, chara_card_opt, chat_session_id)
 
     task = Task.async(fn -> Direct.run(new_messages, pty_session_id, run_opts) end)
     Process.unlink(task.pid)
@@ -378,6 +379,8 @@ defmodule Eai.Chat do
               {{:ok, reply}, full_history}
 
             {:error, reason, partial_history} ->
+              IO.puts("
+❌ Error [#{chat_session_id}]: #{inspect(reason)}")
               {{:error, reason}, partial_history}
           end
 
@@ -423,6 +426,8 @@ defmodule Eai.Chat do
           {:new_message, session.messages}
         )
 
+        IO.puts("
+💥 Task crashed [#{chat_session_id}]: #{inspect(reason)}")
         if session.from, do: GenServer.reply(session.from, {:error, {:task_crashed, reason}})
 
         new_session = %{session | task_ref: nil, from: nil, remind_timer: nil}
@@ -471,8 +476,11 @@ defmodule Eai.Chat do
   defp put_ref(state, ref, session_id),
     do: %{state | ref_to_session: Map.put(state.ref_to_session, ref, session_id)}
 
-  defp build_run_opts(model_opt, prompt_opt, chat_session_id) do
+  defp build_run_opts(model_opt, prompt_opt, chara_card_opt, chat_session_id) do
+    card_opts = if chara_card_opt, do: Eai.Card.to_opts(Eai.Card.get!(chara_card_opt)), else: []
+
     %{chat_session_id: chat_session_id}
+    |> then(fn m -> Map.merge(m, Map.new(card_opts)) end)
     |> then(fn m -> if model_opt, do: Map.put(m, :model, model_opt), else: m end)
     |> then(fn m -> if prompt_opt, do: Map.put(m, :system_prompt, prompt_opt), else: m end)
   end

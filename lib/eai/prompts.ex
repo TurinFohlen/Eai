@@ -1,75 +1,101 @@
 defmodule Eai.Prompts do
   @moduledoc """
-  Prompt 注册表查询接口。
+  Prompt registry. Loads from `config/prompts/*.exs` at runtime.
 
-  所有 prompt 定义集中在 `config/prompts.exs`，运行时通过本模块访问。
-
-  ## 快速查表
-
-      iex> Eai.Prompts.all()          # 全部条目
-      iex> Eai.Prompts.default()      # 列表第一个（系统默认）
-      iex> Eai.Prompts.get(:coder)    # 按 :name atom 查找
-      iex> Eai.Prompts.names()        # 所有 name atom 列表
-      iex> Eai.Prompts.list()         # 打印 name + description 对照表
-
-  ## 在 iex 中使用
-
-      iex> Eai.Chat.talk(prompt: :coder)
-      iex> Eai.Chat.talk(prompt: :analyst, content: "分析这段代码")
-      iex> Eai.Chat.talk(model: :gpt4o, prompt: :coder)
+  Each file registers a single prompt entry under a `:prompt_<name>` key.
+  Pattern mirrors `config/tools/`.
   """
+
+  @prompts_dir Path.expand("config/prompts", File.cwd!())
 
   @type prompt_entry :: keyword()
 
-  # ── 基础查询 ────────────────────────────────────────────────────────────────
+  # ── Core queries ───────────────────────────────────────────────────
 
-  @doc "返回注册表中所有 prompt 条目（顺序与 prompts.exs 定义一致）。"
+  @doc "All prompt entries, sorted by name."
   @spec all() :: [prompt_entry()]
-  def all, do: Application.fetch_env!(:eai, :prompts)
-
-  @doc "返回默认 prompt（注册表第一个条目）。"
-  @spec default() :: prompt_entry()
-  def default, do: hd(all())
-
-  @doc "按 :name atom 查找 prompt，nil 返回默认，找不到返回 nil。"
-  @spec get(atom() | nil) :: prompt_entry() | nil
-  def get(nil), do: default()
-
-  def get(name) when is_atom(name) do
-    Enum.find(all(), fn entry -> entry[:name] == name end)
+  def all do
+    case :persistent_term.get(:eai_prompts, :not_found) do
+      :not_found -> load_prompts()
+      entries -> entries
+    end
   end
 
-  @doc "按 :name atom 查找 prompt，找不到抛出 ArgumentError。"
+  @doc "Reload prompts from disk."
+  @spec reload() :: [prompt_entry()]
+  def reload, do: load_prompts()
+
+  @doc "Default prompt (:momoka)."
+  @spec default() :: prompt_entry()
+  def default, do: get!(:momoka)
+
+  @doc "Get by name atom, nil if missing."
+  @spec get(atom() | nil) :: prompt_entry() | nil
+  def get(nil), do: default()
+  def get(name) when is_atom(name),
+    do: Enum.find(all(), fn e -> e[:name] == name end)
+
+  @doc "Get by name atom, raise if missing."
   @spec get!(atom()) :: prompt_entry()
   def get!(name) do
     case get(name) do
       nil ->
-        raise ArgumentError, "unknown prompt #{inspect(name)}; available: #{inspect(names())}"
-
-      entry ->
-        entry
+        raise ArgumentError,
+          "unknown prompt #{inspect(name)}; available: #{inspect(names())}"
+      entry -> entry
     end
   end
 
-  @doc "返回所有 :name atom 列表。"
+  @doc "All name atoms."
   @spec names() :: [atom()]
   def names, do: Enum.map(all(), & &1[:name])
 
-  @doc "提取 prompt 文本内容（content 字段）。"
-  @spec content(atom() | nil) :: String.t()
+  @doc "Extract content string."
+  @spec content(atom()) :: String.t()
   def content(name), do: get(name)[:content]
 
-  @doc "打印 name → description 对照表，方便在 iex 中查看可用 prompts。"
+  @doc "Print name → description table."
   @spec list() :: :ok
   def list do
     IO.puts("\nAvailable prompts:\n")
-
-    Enum.each(all(), fn entry ->
-      name = entry[:name] |> inspect() |> String.pad_trailing(16)
-      desc = entry[:description] || "(no description)"
-      IO.puts("  #{name}  #{desc}")
+    Enum.each(all(), fn e ->
+      n = e[:name] |> inspect() |> String.pad_trailing(16)
+      d = e[:description] || "(no description)"
+      IO.puts("  #{n}  #{d}")
     end)
-
     IO.puts("")
+  end
+
+  # ── Internal ───────────────────────────────────────────────────────
+
+  defp load_prompts do
+    # Compile all .exs files in prompts directory
+    with {:ok, files} <- File.ls(@prompts_dir) do
+      files
+      |> Enum.filter(&String.ends_with?(&1, ".exs"))
+      |> Enum.sort()
+      |> Enum.each(fn file ->
+        path = Path.join(@prompts_dir, file)
+
+        path
+        |> Config.Reader.read!()
+        |> Enum.each(fn {app, kvs} ->
+          Enum.each(kvs, fn {key, val} -> Application.put_env(app, key, val) end)
+        end)
+      end)
+    end
+
+    # Scan all :prompt_<name> keys from app env
+    entries =
+      Application.get_all_env(:eai)
+      |> Enum.filter(fn
+        {key, _} -> is_atom(key) and String.starts_with?(Atom.to_string(key), "prompt_")
+        _ -> false
+      end)
+      |> Enum.map(fn {_, entry} -> entry end)
+      |> Enum.sort_by(& &1[:name])
+
+    :persistent_term.put(:eai_prompts, entries)
+    entries
   end
 end

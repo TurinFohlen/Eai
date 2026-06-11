@@ -2,29 +2,58 @@ defmodule Eai.Models do
   @moduledoc """
   模型注册表查询接口。
 
-  所有模型定义集中在 `config/models.exs`，运行时通过本模块访问，
-  代码中不再出现任何硬编码的模型字符串。
+  模型定义拆分至 `config/models/*.exs`，每个文件以 `:model_<name>` 为 key 注册一项。
+  新增本地/自托管模型只需新建一个 `.exs` 文件，无需修改任何中心文件。
+
+  默认模型通过 `config :eai, :default_model, :atom` 指定（见 config/config.exs）。
 
   ## 快速查表
 
       iex> Eai.Models.all()           # 全部模型条目
-      iex> Eai.Models.default()       # 列表第一个（系统默认）
+      iex> Eai.Models.default()       # 默认模型（:default_model 配置项）
       iex> Eai.Models.get(:gpt4o)     # 按 :name atom 查找
       iex> Eai.Models.names()         # 所有 name atom 列表
       iex> Eai.Models.vision_models() # 标注了 vision: true 的条目
+      iex> Eai.Models.reload()        # 重新扫描 config/models/ 目录
+
+  ## 本地模型示例
+
+      # config/models/my_qwen.exs
+      import Config
+      config :eai, :model_qwen,
+        name: :qwen,
+        model: "qwen2.5:14b",
+        url: "http://localhost:11434/v1/chat/completions",
+        provider: :openai_compat,
+        api_key_env: nil,
+        receive_timeout: 180_000
   """
+
+  @models_dir Path.expand("config/models", File.cwd!())
 
   @type model_entry :: keyword()
 
   # ── 基础查询 ────────────────────────────────────────────────────────────────
 
-  @doc "返回注册表中所有模型条目（顺序与 models.exs 定义一致）。"
+  @doc "返回注册表中所有模型条目（按文件名字母序）。"
   @spec all() :: [model_entry()]
-  def all, do: Application.fetch_env!(:eai, :models)
+  def all do
+    case :persistent_term.get(:eai_models, :not_found) do
+      :not_found -> load_models()
+      entries -> entries
+    end
+  end
 
-  @doc "返回默认模型（注册表第一个条目）。"
+  @doc "强制重新扫描 config/models/ 目录。"
+  @spec reload() :: [model_entry()]
+  def reload, do: load_models()
+
+  @doc "返回默认模型（由 config :eai, :default_model 指定）。"
   @spec default() :: model_entry()
-  def default, do: hd(all())
+  def default do
+    name = Application.get_env(:eai, :default_model)
+    get!(name)
+  end
 
   @doc "按 :name atom 查找模型，找不到返回 nil。"
   @spec get(atom() | nil) :: model_entry() | nil
@@ -70,7 +99,7 @@ defmodule Eai.Models do
     end
   end
 
-  @doc "从条目中提取模型字符串、URL、provider 等字段，组装成 Direct.run/3 的 opts map。"
+  @doc "从条目中提取字段，组装成 Direct.run/3 的 opts map。"
   @spec to_run_opts(model_entry()) :: map()
   def to_run_opts(entry) do
     base = %{
@@ -83,6 +112,37 @@ defmodule Eai.Models do
     |> maybe_put(:api_key, api_key(entry))
     |> maybe_put(:receive_timeout, entry[:receive_timeout])
     |> maybe_put(:reasoning_effort, entry[:reasoning_effort])
+  end
+
+  # ── 内部加载 ─────────────────────────────────────────────────────────────────
+
+  defp load_models do
+    with {:ok, files} <- File.ls(@models_dir) do
+      files
+      |> Enum.filter(&String.ends_with?(&1, ".exs"))
+      |> Enum.sort()
+      |> Enum.each(fn file ->
+        path = Path.join(@models_dir, file)
+
+        path
+        |> Config.Reader.read!()
+        |> Enum.each(fn {app, kvs} ->
+          Enum.each(kvs, fn {key, val} -> Application.put_env(app, key, val) end)
+        end)
+      end)
+    end
+
+    entries =
+      Application.get_all_env(:eai)
+      |> Enum.filter(fn
+        {key, _} -> is_atom(key) and String.starts_with?(Atom.to_string(key), "model_")
+        _ -> false
+      end)
+      |> Enum.map(fn {_, entry} -> entry end)
+      |> Enum.sort_by(& &1[:name])
+
+    :persistent_term.put(:eai_models, entries)
+    entries
   end
 
   defp maybe_put(map, _key, nil), do: map

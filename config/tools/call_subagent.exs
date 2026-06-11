@@ -69,6 +69,10 @@ defmodule Eai.Tool.CallSubagent do
             prompt: %{
               type: "string",
               description: "Optional system prompt name (e.g., 'coder', 'analyst')."
+            },
+            sbc: %{
+              type: "boolean",
+              description: "If true, blocks until subagent completes and returns result directly (saves 2+ roundtrips). Default: false. Use for tasks expected to finish quickly (<60s). DO NOT use for tasks that might hang."
             }
           },
           required: ["message"]
@@ -93,6 +97,37 @@ defmodule Eai.Tool.CallSubagent do
 
     pty_session_id = Map.get(args, "pty_session_id", chat_session_id)
 
+    sbc_raw = Map.get(args, "sbc", false)
+    sbc? = sbc_raw == true or sbc_raw == "true"
+
+    # ── pre_context loading (shared by both modes) ──────────────
+    if is_nil(existing_session) && pre_context_path && File.exists?(pre_context_path) do
+      case Eai.Chat.replace_history(pre_context_path, chat_session_id, format_opt) do
+        {:ok, count} ->
+          Logger.info(
+            "Subagent pre_context loaded: #{count} messages from #{pre_context_path}"
+          )
+
+        {:error, reason} ->
+          Logger.error("Subagent pre_context load failed: #{reason}")
+      end
+    end
+
+    if sbc? do
+      # ── SBC mode (same pattern as execute_script sbc) ──
+      sbc_result(chat_session_id, pty_session_id, message, model_opt, prompt_opt)
+    else
+      # ── async mode (original behaviour) ────────────────────────
+      async_dispatch(chat_session_id, pty_session_id, message, model_opt, prompt_opt)
+    end
+  end
+
+  # ── Shared: dispatch subagent Task, return task_id ──────────
+  # Both SBC and async modes use the same dispatch path.
+  # SBC then polls internally; async returns the task_id for the
+  # LLM to poll via get_subagent_result.
+
+  defp dispatch_subagent(chat_session_id, pty_session_id, message, model_opt, prompt_opt) do
     subagent_task_id = "satask_#{System.unique_integer([:positive, :monotonic])}"
 
     Eai.Naming.cache().put("subagent_result:#{subagent_task_id}", %{
@@ -103,31 +138,15 @@ defmodule Eai.Tool.CallSubagent do
     Task.start(fn ->
       result_entry =
         try do
-          # pre_context 仅在首次创建（无 existing_session）时加载
-          if is_nil(existing_session) && pre_context_path && File.exists?(pre_context_path) do
-            case Eai.Chat.replace_history(pre_context_path, chat_session_id, format_opt) do
-              {:ok, count} ->
-                Logger.info(
-                  "Subagent pre_context loaded: #{count} messages from #{pre_context_path}"
-                )
-
-              {:error, reason} ->
-                Logger.error("Subagent pre_context load failed: #{reason}")
-            end
-          end
-
-          talk_result =
-            Eai.Chat.talk(
-              content: message,
-              mod: :f,
-              chat_session: chat_session_id,
-              pty_session_id: pty_session_id,
-              model: model_opt,
-              prompt: prompt_opt,
-              timeout: 120_000
-            )
-
-          case talk_result do
+          case Eai.Chat.talk(
+                 content: message,
+                 mod: :f,
+                 chat_session: chat_session_id,
+                 pty_session_id: pty_session_id,
+                 model: model_opt,
+                 prompt: prompt_opt,
+                 timeout: 120_000
+               ) do
             {:ok, response} ->
               %{status: "complete", answer: response, pty_session_id: pty_session_id}
 
@@ -142,6 +161,53 @@ defmodule Eai.Tool.CallSubagent do
 
       Eai.Naming.cache().put("subagent_result:#{subagent_task_id}", result_entry)
     end)
+
+    subagent_task_id
+  end
+
+  # ── SBC: dispatch async + internal polling loop ──────────────
+  # Same pattern as execute_script sbc_wait: submit async,
+  # then poll the result store (cache) until complete or timeout.
+  # The LLM never sees the intermediate "running" states — they
+  # never enter conversation history.
+
+  defp sbc_result(chat_session_id, pty_session_id, message, model_opt, prompt_opt) do
+    subagent_task_id = dispatch_subagent(
+      chat_session_id, pty_session_id, message, model_opt, prompt_opt
+    )
+    sbc_wait(subagent_task_id, chat_session_id, 60)
+  end
+
+  defp sbc_wait(subagent_task_id, chat_session_id, max_loops) do
+    cooldown = Application.get_env(:eai, :poll_cooldown_ms) || 2000
+    Process.sleep(cooldown)
+
+    case Eai.Naming.cache().get("subagent_result:#{subagent_task_id}") do
+      %{status: "complete", answer: answer} ->
+        %{status: "complete", answer: answer, chat_session: chat_session_id}
+        |> Eai.Utils.sanitize_value()
+        |> Jason.encode!()
+
+      %{status: "error", reason: reason} ->
+        %{status: "error", reason: reason, chat_session: chat_session_id}
+        |> Jason.encode!()
+
+      _ when max_loops <= 0 ->
+        Logger.warning("SBC timeout for subagent #{chat_session_id}")
+        %{status: "timeout", reason: "subagent did not complete in time", chat_session: chat_session_id}
+        |> Eai.Utils.sanitize_value()
+        |> Jason.encode!()
+
+      _ ->
+        sbc_wait(subagent_task_id, chat_session_id, max_loops - 1)
+    end
+  end
+
+  # ── Async: dispatch + return task_id immediately ─────────────
+  defp async_dispatch(chat_session_id, pty_session_id, message, model_opt, prompt_opt) do
+    subagent_task_id = dispatch_subagent(
+      chat_session_id, pty_session_id, message, model_opt, prompt_opt
+    )
 
     %{
       subagent_task_id: subagent_task_id,

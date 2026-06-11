@@ -24,8 +24,11 @@ config :logger, :console,
     :body
   ]
 
-# ── 模型注册表（统一在 models.exs 管理）──────────────────────────────────────
-import_config "models.exs"
+# ── 默认模型 ──────────────────────────────────────────────────────────────────
+# 模型定义已拆分至 config/models/*.exs，每个文件以 :model_<name> 为 key 注册一项。
+# 新增本地/自托管模型只需在 config/models/ 下新建一个 .exs 文件即可，无需修改此处。
+# 修改默认模型：将下面的 atom 改为目标模型的 :name。
+config :eai, :default_model, :deepseek
 
 # ── 兼容层：从注册表中取第一个模型作为全局 :llm 配置 ────────────────────────
 # （Eai.LLM.Direct 内部已通过 Eai.Models 查表，此段仅保留给可能直接读 :llm 的旧代码）
@@ -64,7 +67,7 @@ config :eai, :telemetry_events, [
 ]
 
 # ── System Prompt ─────────────────────────────────────────────────────────────
-import_config "prompts.exs"
+# prompts loaded via config/prompts/
 
 # ── 环境特定配置覆盖 ──────────────────────────────────────────────────────────
 import_config "#{config_env()}.exs"

@@ -58,7 +58,36 @@ defmodule Eai.LLM.Direct do
     effort = Map.get(opts, :reasoning_effort, entry[:reasoning_effort])
     prompt = resolve_prompt(Map.get(opts, :system_prompt))
 
+    # ── Card pre_context injection ────────────────────────────────
+    card_pre = Map.get(opts, :card_pre_context)
+    messages = if is_list(card_pre) and card_pre != [] do
+      card_pre ++ messages
+    else
+      messages
+    end
+
+    # ── Card system_prompt merge ──────────────────────────────────
+    card_sys = Map.get(opts, :card_system_prompt)
+    prompt = if card_sys && card_sys != "" do
+      prompt <> "
+
+---
+## Role
+" <> card_sys
+    else
+      prompt
+    end
+
+    # ── Tool filtering ────────────────────────────────────────────
+    card_tools = Map.get(opts, :card_tools)
     %{schemas: schemas} = tools()
+    schemas = if is_list(card_tools) do
+      allowed = MapSet.new(card_tools)
+      Enum.filter(schemas, fn s -> MapSet.member?(allowed, s.function.name) end)
+    else
+      schemas
+    end
+    opts = if is_list(card_tools), do: Map.put(opts, :tools_allowlist, MapSet.new(card_tools)), else: opts
 
     adapter_opts = [reasoning_effort: effort]
     req = adapter.to_request_body(messages, model, prompt, schemas, adapter_opts)
@@ -173,6 +202,12 @@ defmodule Eai.LLM.Direct do
 
   defp handle_tool_calls(assistant_msg, history, pty_session_id, chat_session_id, opts) do
     %{dispatch: dispatch} = tools()
+    allowlist = Map.get(opts, :tools_allowlist)
+    dispatch = if allowlist do
+      Map.filter(dispatch, fn {name, _} -> MapSet.member?(allowlist, name) end)
+    else
+      dispatch
+    end
     tool_uses = Message.tool_uses(assistant_msg)
 
     {new_user_messages, should_continue?} =
@@ -222,7 +257,10 @@ defmodule Eai.LLM.Direct do
       end)
 
     new_user_messages = Enum.reverse(new_user_messages)
-    all_messages = dedup_stale_running_polls(history ++ new_user_messages)
+    all_messages =
+      (history ++ new_user_messages)
+      |> dedup_stale_task_polls()
+      |> dedup_stale_subagent_polls()
 
     if should_continue? do
       run(all_messages, pty_session_id, opts)
@@ -232,37 +270,22 @@ defmodule Eai.LLM.Direct do
     end
   end
 
-  # ── get_task_result "running" dedup ─────────────────────────────────
-  # When the LLM polls get_task_result multiple times and gets `status: "running"`,
-  # only the LATEST poll result matters — the elapsed time in older polls is stale.
-  # This function prunes the history: for any new get_task_result tool_result
-  # with status "running", it removes the previous assistant+user pair (the old poll
-  # and its answer) from the history tail, keeping context clean and small.
-  # """
+  # ── Poll dedup: get_task_result ───────────────────────────────────────
+  # Prune stale assistant(tool_use)+user(tool_result) pairs where
+  # status == "running". Only the latest running pair survives.
+  # Fully independent of get_subagent_result dedup — no shared code path.
 
-  # After tool execution, prune stale "running" poll pairs from history.
-  # Preserves pair atomicity: assistant(tool_calls) + user(tool_result)
-  # are always deleted together. Only the LATEST running pair survives.
-
-  defp dedup_stale_running_polls(all_messages) do
+  defp dedup_stale_task_polls(all_messages) do
     {clean, _} =
       all_messages
       |> Enum.reverse()
       |> Enum.reduce({[], false}, fn msg, {acc, kept_running} ->
-        case classify_poll_msg(msg) do
+        case classify_task_poll(msg) do
           {:running_user, _tool_use_id} ->
-            if kept_running do
-              {acc, :skip_assistant}
-            else
-              {[msg | acc], true}
-            end
+            if kept_running, do: {acc, :skip_assistant}, else: {[msg | acc], true}
 
-          :assistant_get_task_result ->
-            if kept_running == :skip_assistant do
-              {acc, false}
-            else
-              {[msg | acc], kept_running}
-            end
+          :assistant_poll_tool ->
+            if kept_running == :skip_assistant, do: {acc, false}, else: {[msg | acc], kept_running}
 
           _ ->
             {[msg | acc], kept_running}
@@ -271,7 +294,7 @@ defmodule Eai.LLM.Direct do
     clean
   end
 
-  defp classify_poll_msg(%{role: :user, content: [{:tool_result, kw}]}) do
+  defp classify_task_poll(%{role: :user, content: [{:tool_result, kw}]}) do
     content_str =
       case kw[:content] do
         [{:text, t}] -> t
@@ -284,17 +307,67 @@ defmodule Eai.LLM.Direct do
     end
   end
 
-  defp classify_poll_msg(%{role: :assistant, content: content}) do
-    has_gtr =
+  defp classify_task_poll(%{role: :assistant, content: content}) do
+    has_poll =
       Enum.any?(content, fn
         {:tool_use, kw} -> Keyword.get(kw, :name) == "get_task_result"
         _ -> false
       end)
 
-    if has_gtr, do: :assistant_get_task_result, else: :other
+    if has_poll, do: :assistant_poll_tool, else: :other
   end
 
-  defp classify_poll_msg(_), do: :other
+  defp classify_task_poll(_), do: :other
+
+  # ── Poll dedup: get_subagent_result ──────────────────────────────────
+  # Same pattern as get_task_result, fully independent implementation.
+  # A future change to classify_task_poll cannot accidentally affect
+  # subagent polling, and vice versa. Explicit duplication over
+  # implicit coupling.
+
+  defp dedup_stale_subagent_polls(all_messages) do
+    {clean, _} =
+      all_messages
+      |> Enum.reverse()
+      |> Enum.reduce({[], false}, fn msg, {acc, kept_running} ->
+        case classify_subagent_poll(msg) do
+          {:running_user, _tool_use_id} ->
+            if kept_running, do: {acc, :skip_assistant}, else: {[msg | acc], true}
+
+          :assistant_poll_tool ->
+            if kept_running == :skip_assistant, do: {acc, false}, else: {[msg | acc], kept_running}
+
+          _ ->
+            {[msg | acc], kept_running}
+        end
+      end)
+    clean
+  end
+
+  defp classify_subagent_poll(%{role: :user, content: [{:tool_result, kw}]}) do
+    content_str =
+      case kw[:content] do
+        [{:text, t}] -> t
+        _ -> ""
+      end
+
+    case Jason.decode(content_str) do
+      {:ok, %{"status" => "running"}} -> {:running_user, kw[:tool_use_id]}
+      _ -> :other
+    end
+  end
+
+  defp classify_subagent_poll(%{role: :assistant, content: content}) do
+    has_poll =
+      Enum.any?(content, fn
+        {:tool_use, kw} -> Keyword.get(kw, :name) == "get_subagent_result"
+        _ -> false
+      end)
+
+    if has_poll, do: :assistant_poll_tool, else: :other
+  end
+
+  defp classify_subagent_poll(_), do: :other
 
   # ── Model / prompt resolution ────────────────────────────────────────
 
