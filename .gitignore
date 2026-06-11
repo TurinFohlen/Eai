@@ -2,7 +2,8 @@
 _build/
 deps/
 doc/
-
+#Personal
+chat_records/
 # Mix
 *.ez
 
