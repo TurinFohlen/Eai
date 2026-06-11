@@ -82,50 +82,44 @@ defmodule Eai.Tool.ExecuteScript do
   end
 
   # ── SBC: internal polling loop ──────────────────────────────────
-  #
-  # SBC is NOT a separate execution mode — it's just the program polling
-  # on behalf of the model.  When an interrupt fires, we inject Ctrl+C +
-  # the interrupt message + right sentinel into the PTY stream, then KEEP
-  # POLLING.  The task will complete naturally with the interrupt message
-  # as output, exactly like ACC mode.  There is no "interrupted" terminal
-  # state for SBC.  — EAI fix, 2025
 
   defp sbc_wait(task_id, pty_session_id, max_loops \\ 60) do
     cooldown = Application.get_env(:eai, :poll_cooldown_ms) || 2000
     Process.sleep(cooldown)
 
-    # If the user hit interrupt, inject Ctrl+C + sentinel into the PTY.
-    # Do NOT return early — fall through and let the polling loop collect
-    # the natural result, same as ACC.
+    # Check interrupt flag
     if Eai.Task.check_and_clear_interrupt_flag(pty_session_id) do
       Eai.Naming.pool().interrupt_task(pty_session_id)
-    end
+      %{status: "interrupted", task_id: task_id}
+      |> Eai.Utils.sanitize_value()
+      |> Jason.encode!()
+    else
+      case Eai.Task.get(task_id) do
+        %{status: "complete", output: output} ->
+          %{status: "complete", output: output, task_id: task_id}
+          |> Eai.Utils.sanitize_value()
+          |> Jason.encode!()
 
-    case Eai.Task.get(task_id) do
-      %{status: "complete", output: output} ->
-        %{status: "complete", output: output, task_id: task_id}
-        |> Eai.Utils.sanitize_value()
-        |> Jason.encode!()
+        nil ->
+          %{error: "task not found", task_id: task_id}
+          |> Jason.encode!()
 
-      nil ->
-        %{error: "task not found", task_id: task_id}
-        |> Jason.encode!()
+        _ when max_loops <= 0 ->
+          Logger.warning("SBC timeout for #{task_id}, force-completing")
+          case Eai.Task.force_complete(task_id) do
+            {:ok, output} ->
+              Eai.Naming.pool().clear_task(pty_session_id, task_id)
+              %{status: "timeout", output: output, task_id: task_id}
+              |> Eai.Utils.sanitize_value()
+              |> Jason.encode!()
+            _ ->
+              %{error: "SBC timeout — task never completed", task_id: task_id}
+              |> Jason.encode!()
+          end
 
-      _ when max_loops <= 0 ->
-        Logger.warning("SBC timeout for #{task_id}, force-completing")
-        case Eai.Task.force_complete(task_id) do
-          {:ok, output} ->
-            Eai.Naming.pool().clear_task(pty_session_id, task_id)
-            %{status: "timeout", output: output, task_id: task_id}
-            |> Eai.Utils.sanitize_value()
-            |> Jason.encode!()
-          _ ->
-            %{error: "SBC timeout — task never completed", task_id: task_id}
-            |> Jason.encode!()
-        end
-
-      _ ->
-        sbc_wait(task_id, pty_session_id, max_loops - 1)
+        _ ->
+          sbc_wait(task_id, pty_session_id, max_loops - 1)
+      end
     end
   end
 

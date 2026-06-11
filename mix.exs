@@ -4,7 +4,7 @@ defmodule Eai.MixProject do
   def project do
     [
       app: :eai,
-      version: "0.1.11",
+      version: "0.1.12",
       elixir: "~> 1.19",
       start_permanent: Mix.env() == :prod,
       deps: deps(),

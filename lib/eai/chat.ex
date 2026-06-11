@@ -174,7 +174,7 @@ defmodule Eai.Chat do
         {:talk_async, message, timeout, model_opt, prompt_opt, chara_card_opt, chat_session, pty_session}
       )
 
-      IO.puts("Task submitted. Use Eai.Chat.interrupt!(\"#{chat_session}\") to stop it.")
+      IO.puts("Task submitted. Use Eai.Chat.interrupt!(\"#{chat_session}\") to cancel its current task, or Eai.Task.trigger_timeout_window(\"#{pty_session}\") to stop the loop and nudge the model to wrap up.")
     end
   end
 
@@ -239,8 +239,7 @@ defmodule Eai.Chat do
     session = get_session(state, chat_session_id)
 
     if is_nil(session.task_ref) do
-      TaskResult.set_command_replacement_flag(chat_session_id)
-      {:reply, :ok, state}
+      {:reply, {:error, :no_task}, state}
     else
       TaskResult.set_interrupt_flag(chat_session_id)
       {:reply, :ok, state}

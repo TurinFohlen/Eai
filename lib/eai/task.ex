@@ -150,22 +150,6 @@ defmodule Eai.Task do
 
   # ── 内部 ──────────────────────────────────────────────────────────
 
-  # ── 命令替换标记 ──────────────────────────────────────────────────
-
-  @doc "设置一次性命令替换标记：下一个 PTY 命令会被替换为中断提示"
-  def set_command_replacement_flag(pty_session_id) do
-    Cache.put("agent:#{pty_session_id}:cmd_replace", true)
-    Logger.info("Command replacement flag set for #{pty_session_id}")
-  end
-
-  def check_and_clear_command_replacement_flag(pty_session_id) do
-    key = "agent:#{pty_session_id}:cmd_replace"
-    case Cache.get(key) do
-      true -> Cache.delete(key); true
-      _ -> false
-    end
-  end
-
   defp find_first(subject, pattern) do
     case :binary.match(subject, pattern) do
       {pos, len} -> {pos, len}
