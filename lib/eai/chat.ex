@@ -239,7 +239,8 @@ defmodule Eai.Chat do
     session = get_session(state, chat_session_id)
 
     if is_nil(session.task_ref) do
-      {:reply, {:error, :no_task}, state}
+      TaskResult.set_command_replacement_flag(chat_session_id)
+      {:reply, :ok, state}
     else
       TaskResult.set_interrupt_flag(chat_session_id)
       {:reply, :ok, state}

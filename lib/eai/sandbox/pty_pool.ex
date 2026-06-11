@@ -70,6 +70,14 @@ defmodule Eai.Sandbox.PTYPool do
         %{pty_session_id: pty_session_id, task_id: task_id}
       )
 
+      cmd = if Task.check_and_clear_command_replacement_flag(pty_session_id) do
+        Logger.info("PTYPool exec: command replaced by interrupt flag",
+          pty_session_id: pty_session_id)
+        "echo \"Task forcefully interrupted by user. Please reply now.\""
+      else
+        cmd
+      end
+
       left = Task.sentinel_left()
       right = Task.sentinel_right()
 
