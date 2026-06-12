@@ -6,7 +6,8 @@ doc/
 chat_records/
 # Mix
 *.ez
-
+#editor
+*.bak
 # OS
 .DS_Store
 Thumbs.db
