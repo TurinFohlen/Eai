@@ -26,7 +26,7 @@ defmodule Eai.MixProject do
       {:req, "~> 0.5"},
       {:finch, "~> 0.19"},
       # MCP client (Model Context Protocol)
-      {:anubis_mcp, "~> 0.13"},
+      {:anubis_mcp, "~> 1.6"},
       {:plug, "~> 1.16"},
       {:jason, "~> 1.4.5"},
 
