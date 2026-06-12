@@ -25,7 +25,22 @@ defmodule Eai.Task do
     Cache.put("result:#{task_id}:buffer", "")
   end
 
-  @doc "流式收集 PTY 输出，哨兵匹配截取纯净结果"
+  @doc """
+  Stream-collect PTY output, extract between sentinels.
+
+  Called by PTYPool on_data callback. Buffers and matches sentinel patterns
+  to extract clean result. Returns `:collecting` while streaming, `{:complete, output}` when done.
+
+  Internal use (called by PTYPool).
+
+  ## Options
+    * `task_id` (string) — Task ID.
+    * `data` (string) — New PTY output chunk.
+
+  ## Returns
+      `:collecting` — still waiting for sentinel-marked output
+      `{:complete, output}` — result extracted, ready to use
+  """
   def collect(task_id, data) do
     data = Eai.Utils.sanitize_value(data)
     buf_key = "result:#{task_id}:buffer"
@@ -66,7 +81,23 @@ defmodule Eai.Task do
     end
   end
 
-  @doc "查询任务结果"
+  @doc """
+  Poll task result from cache.
+
+  Returns status and output (if complete). Used by `get_task_result` tool.
+
+  ## Options
+    * `task_id` (string) — Task ID to poll.
+
+  ## Returns
+      `%{status: "complete", output: "..."}`
+      `%{status: "running" | "collecting", started_at: ...}`
+      `nil` — task not found or expired
+
+  ## Example
+      iex> Eai.Task.get("task_1234567890")
+      %{status: "complete", output: "total 42\\n-rw-r--r--  ..."}
+  """
   def get(task_id) do
     case Cache.get("result:#{task_id}") do
       %{status: "complete"} = r -> %{output: r.output, status: "complete"}
@@ -75,7 +106,23 @@ defmodule Eai.Task do
     end
   end
 
-  @doc "超时强制收集：从 buffer 尽力提取有效内容"
+  @doc """
+  Force task completion, extracting output from buffer (even if incomplete).
+
+  Used by `force_complete_task` tool when task hangs or times out.
+  Tries to extract content between sentinels; falls back to buffer tail.
+
+  ## Options
+    * `task_id` (string) — Task to force complete.
+
+  ## Returns
+      `{:ok, output}` — partial or complete output extracted
+      `{:error, reason}` — task not found or other error
+
+  ## Example
+      iex> Eai.Task.force_complete("task_1234567890")
+      {:ok, "partial output from hung task..."}
+  """
   def force_complete(task_id) do
     buf_key = "result:#{task_id}:buffer"
     res_key = "result:#{task_id}"
@@ -112,11 +159,35 @@ defmodule Eai.Task do
 
   # ── 中断标记 ──────────────────────────────────────────────────────
 
+  @doc """
+  Set interrupt flag for a PTY session.
+
+  Signals that next task poll should inject Ctrl+C to running process.
+  Called by `Chat.interrupt!()`.
+
+  ## Options
+    * `pty_session_id` (string) — Session to interrupt.
+
+  ## Returns
+      `:ok`
+  """
   def set_interrupt_flag(pty_session_id) do
     Cache.put(interrupt_key(pty_session_id), true)
     Logger.info("Interrupt flag set for #{pty_session_id}")
   end
 
+  @doc """
+  Check interrupt flag and clear if set.
+
+  Internal use (called by LLM polling loop).
+
+  ## Options
+    * `pty_session_id` (string) — Session to check.
+
+  ## Returns
+      `true` if flag was set (now cleared)
+      `false` if not set
+  """
   def check_and_clear_interrupt_flag(pty_session_id) do
     key = interrupt_key(pty_session_id)
     case Cache.get(key) do
@@ -130,11 +201,38 @@ defmodule Eai.Task do
 
   # ── 超时窗口 ──────────────────────────────────────────────────────
 
+  @doc """
+  Trigger timeout notification window for a task.
+
+  Injects a message into LLM history telling it to wrap up gracefully.
+  Multiple triggers stack (depth increases).
+
+  Called via `trigger_timeout_window(pty_session_id)` in IEx.
+
+  ## Options
+    * `pty_session_id` (string) — Session to timeout.
+    * `depth` (integer) — Recursion depth. Default: `1`
+
+  ## Returns
+      `:ok`
+  """
   def trigger_timeout_window(pty_session_id, depth \\ 1) do
     Cache.put(window_key(pty_session_id), depth)
     Logger.info("Timeout window triggered for #{pty_session_id}, depth: #{depth}")
   end
 
+  @doc """
+  Check timeout window and decrement if active.
+
+  Internal use (called by LLM polling loop on each iteration).
+
+  ## Options
+    * `pty_session_id` (string) — Session to check.
+
+  ## Returns
+      `"The timeout you set has been reached..."` message if window active
+      `nil` if no timeout set
+  """
   def check_timeout_window(pty_session_id) do
     key = window_key(pty_session_id)
     case Cache.get(key) do

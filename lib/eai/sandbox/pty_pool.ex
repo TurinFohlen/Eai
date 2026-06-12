@@ -14,27 +14,97 @@ defmodule Eai.Sandbox.PTYPool do
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: Eai.Naming.pool())
 
+  @doc """
+  Execute command asynchronously in a PTY session.
+
+  Submits command to PTY, returns task_id immediately. Results collected via `Task.get/1`.
+
+  ## Options
+    * `pty_session_id` (string) — PTY session for isolation. Default: `"default"`
+    * `cmd` (string) — Shell command or script (may contain sentinels).
+    * `task_id` (string, optional) — Custom task ID. Auto-generated if omitted.
+
+  ## Returns
+      `{:ok, task_id}` or `{:error, reason}`
+
+  ## Example
+      iex> Eai.Sandbox.PTYPool.exec_async("default", "ls -la")
+      {:ok, "task_1234567890"}
+  """
   def exec_async(pty_session_id, cmd, task_id \\ nil) do
     task_id = task_id || "task_#{System.unique_integer([:positive, :monotonic])}"
     GenServer.call(Eai.Naming.pool(), {:exec, pty_session_id, task_id, cmd}, 15_000)
   end
 
+  @doc """
+  Force reset a PTY session (kill processes, clear state).
+
+  Use after hang or corruption. PTY recreated on next command.
+
+  ## Options
+    * `pty_session_id` (string) — Session to reset.
+
+  ## Returns
+      `:ok` or `{:error, reason}`
+  """
   def force_reset(pty_session_id) do
     GenServer.call(Eai.Naming.pool(), {:force_reset, pty_session_id})
   end
 
+  @doc """
+  List all active PTY sessions.
+
+  ## Returns
+      List of session IDs: `["default", "task_1", ...]`
+  """
   def list_sessions do
     GenServer.call(Eai.Naming.pool(), :list_sessions)
   end
 
+  @doc """
+  Send raw input to PTY (for interactive prompts, Ctrl+C, etc.).
+
+  ## Options
+    * `pty_session_id` (string) — Target session.
+    * `input` (string) — Raw input to send. Supports escape sequences:
+      - `\\n` = newline, `\\r` = carriage return, `\\t` = tab
+      - `\\x03` = Ctrl+C, `\\x04` = Ctrl+D, `\\x1a` = Ctrl+Z
+
+  ## Example
+      iex> Eai.Sandbox.PTYPool.write_raw("default", "\\x03")  # Send Ctrl+C
+      :ok
+  """
   def write_raw(pty_session_id, input) do
     GenServer.call(Eai.Naming.pool(), {:write_raw, pty_session_id, input})
   end
 
+  @doc """
+  Set interrupt flag for a PTY session (injects Ctrl+C on next poll).
+
+  Internal use (called by `Chat.interrupt!`).
+
+  ## Options
+    * `pty_session_id` (string) — Session to interrupt.
+
+  ## Returns
+      `:ok` or `{:error, reason}`
+  """
   def interrupt_task(pty_session_id) do
     GenServer.call(Eai.Naming.pool(), {:interrupt_task, pty_session_id})
   end
 
+  @doc """
+  Clear a completed task from PTY session state.
+
+  Internal use (cache cleanup).
+
+  ## Options
+    * `pty_session_id` (string) — Session.
+    * `task_id` (string) — Task to clear.
+
+  ## Returns
+      `:ok` or `{:error, reason}`
+  """
   def clear_task(pty_session_id, task_id) do
     GenServer.call(Eai.Naming.pool(), {:clear_task, pty_session_id, task_id})
   end
