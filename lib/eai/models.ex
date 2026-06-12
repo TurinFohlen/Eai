@@ -35,8 +35,15 @@ defmodule Eai.Models do
 
   # ── 基础查询 ────────────────────────────────────────────────────────────────
 
-  @doc "返回注册表中所有模型条目（按文件名字母序）。"
   @spec all() :: [model_entry()]
+  @doc """
+  Get all registered models from config.
+
+  Loads from `:persistent_term` cache (set by `reload/0`).
+
+  ## Returns
+      List of model entries: `[name: :deepseek, model: "deepseek-v4", url: "...", provider: :openai_compat, ...]`
+  """
   def all do
     case :persistent_term.get(:eai_models, :not_found) do
       :not_found -> load_models()
@@ -44,18 +51,37 @@ defmodule Eai.Models do
     end
   end
 
-  @doc "强制重新扫描 config/models/ 目录。"
+  @doc """
+  Force reload model registry from config/models.exs.
+
+  Returns all reloaded model entries.
+  """
   @spec reload() :: [model_entry()]
   def reload, do: load_models()
 
-  @doc "返回默认模型（由 config :eai, :default_model 指定）。"
+  @doc """
+  Get default model (configured in config/config.exs `:default_model`).
+
+  Default is `:deepseek`.
+  """
   @spec default() :: model_entry()
   def default do
     name = Application.get_env(:eai, :default_model)
     get!(name)
   end
 
-  @doc "按 :name atom 查找模型，找不到返回 nil。"
+  @doc """
+  Look up model by `:name` atom.
+
+  Returns `nil` if not found. `nil` input returns default model.
+
+  ## Options
+    * `name` (atom) — Model name: `:deepseek`, `:claude_opus`, etc.
+
+  ## Example
+      iex> Eai.Models.get(:claude_opus)
+      %{name: :claude_opus, model: "claude-opus-4-6", ...}
+  """
   @spec get(atom() | nil) :: model_entry() | nil
   def get(nil), do: default()
 
@@ -63,7 +89,15 @@ defmodule Eai.Models do
     Enum.find(all(), fn entry -> entry[:name] == name end)
   end
 
-  @doc "按 :name atom 查找模型，找不到抛出 ArgumentError。"
+  @doc """
+  Look up model by `:name` atom. Raises if not found.
+
+  ## Options
+    * `name` (atom) — Model name.
+
+  ## Raises
+      ArgumentError if model not found.
+  """
   @spec get!(atom()) :: model_entry()
   def get!(name) do
     case get(name) do
@@ -72,21 +106,48 @@ defmodule Eai.Models do
     end
   end
 
-  @doc "返回所有 :name atom 列表。"
+  @doc """
+  Get list of all registered model names (atoms).
+
+  ## Example
+      iex> Eai.Models.names()
+      [:deepseek, :claude_opus, :claude_sonnet, :gpt4o, ...]
+  """
   @spec names() :: [atom()]
   def names, do: Enum.map(all(), & &1[:name])
 
-  @doc "返回所有标注了 vision: true 的模型条目。"
+  @doc """
+  Get all models that support vision (images).
+
+  ## Returns
+      List of model entries where `:vision` is `true`.
+  """
   @spec vision_models() :: [model_entry()]
   def vision_models, do: Enum.filter(all(), &(&1[:vision] == true))
 
-  @doc "返回第一个支持视觉的模型，找不到返回 nil。"
+  @doc """
+  Get first vision-capable model, or `nil` if none available.
+
+  Useful for routing image analysis requests.
+  """
   @spec default_vision() :: model_entry() | nil
   def default_vision, do: hd(vision_models() ++ [nil])
 
   # ── 字段便捷访问 ─────────────────────────────────────────────────────────────
 
-  @doc "从条目中提取 API Key（读对应环境变量；nil 表示无需 key）。"
+  @doc """
+  Extract API key from model entry (reads from environment variable).
+
+  Returns `nil` if model needs no authentication (e.g., local Ollama).
+  Raises if required env var is not set.
+
+  ## Options
+    * `entry` — Model entry map.
+
+  ## Example
+      iex> Eai.Models.api_key(Eai.Models.get!(:deepseek))
+      "sk-xxxxxxxx"
+  """
   @spec api_key(model_entry()) :: String.t() | nil
   def api_key(entry) do
     case entry[:api_key_env] do
@@ -99,7 +160,14 @@ defmodule Eai.Models do
     end
   end
 
-  @doc "从条目中提取字段，组装成 Direct.run/3 的 opts map。"
+  @doc """
+  Extract model fields into opts map for LLM.Direct.run/3.
+
+  Internal use; called during Chat.talk processing.
+
+  ## Returns
+      Map with keys: `:model`, `:url`, `:provider`, `:api_key`, `:receive_timeout`, `:reasoning_effort`
+  """
   @spec to_run_opts(model_entry()) :: map()
   def to_run_opts(entry) do
     base = %{
@@ -121,15 +189,7 @@ defmodule Eai.Models do
       files
       |> Enum.filter(&String.ends_with?(&1, ".exs"))
       |> Enum.sort()
-      |> Enum.each(fn file ->
-        path = Path.join(@models_dir, file)
-
-        path
-        |> Config.Reader.read!()
-        |> Enum.each(fn {app, kvs} ->
-          Enum.each(kvs, fn {key, val} -> Application.put_env(app, key, val) end)
-        end)
-      end)
+      |> Enum.each(&compile_model_file/1)
     end
 
     entries =
@@ -143,6 +203,18 @@ defmodule Eai.Models do
 
     :persistent_term.put(:eai_models, entries)
     entries
+  end
+
+  defp compile_model_file(file) do
+    path = Path.join(@models_dir, file)
+
+    path
+    |> Config.Reader.read!()
+    |> Enum.each(fn {app, kvs} -> put_model_app_env(app, kvs) end)
+  end
+
+  defp put_model_app_env(app, kvs) do
+    Enum.each(kvs, fn {key, val} -> Application.put_env(app, key, val) end)
   end
 
   defp maybe_put(map, _key, nil), do: map

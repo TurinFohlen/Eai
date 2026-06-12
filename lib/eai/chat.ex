@@ -16,34 +16,47 @@ defmodule Eai.Chat do
   end
 
   @doc """
-  统一对话入口。
+  Send a message to LLM and get response (or enter interactive mode).
 
-  ## 交互式多行模式（human / :h）
-      进入后逐行输入，`/s` 发送，`/c` 取消。
-      发送后立即返回 iex 提示符，任务在后台运行，结果自动打印。
-      可以随时调用 `Eai.Chat.interrupt!` 中断。
+  ## Options
 
-      iex> Eai.Chat.talk
-      iex> Eai.Chat.talk(mod: :h, timeout: 10_000)
-      iex> Eai.Chat.talk(model: :gpt4o)
-      iex> Eai.Chat.talk(prompt: :coder)
-      iex> Eai.Chat.talk(chat_session: \"work\")
+    * `:content` (string) — User message. Required for `:function` mode.
+    * `:mod` (`:function` | `:human`) — Execution mode. Default: `:human`
+      - `:function` — one-shot, synchronous, returns `{:ok, reply}` or `{:error, reason}`
+      - `:human` — interactive, type `/s` to send, `/c` to cancel
+    * `:timeout` (integer) — Max wait for reply in milliseconds. Default: `:infinity`
 
-  ## 单行消息模式（function / :f）
-      同步等待回复，返回 {:ok, reply} 或 {:error, reason}。
+    * `:model` (atom) — Model name: `:deepseek`, `:claude_opus`, `:gpt4o`, etc.
+                        Default: `:deepseek`
+    * `:prompt` (atom) — System prompt: `:coder`, `:analyst`, `:momoka`, etc.
+                         Default: `:momoka`
+    * `:chara_card` (atom) — Override model + prompt with character card.
+                             Example: `:backend_engineer`. Overrides `:model` and `:prompt`.
 
-      iex> Eai.Chat.talk(content: \"帮我查一下时间\")
-      iex> Eai.Chat.talk(mod: :f, content: \"查时间\", timeout: 30_000)
-      iex> Eai.Chat.talk(content: \"hi\", model: :claude_sonnet, prompt: :analyst)
-      iex> Eai.Chat.talk(content: \"继续\", chat_session: \"work\")
+    * `:chat_session` (string) — Conversation history isolation. Default: `"default"`
+    * `:pty_session_id` (string) — PTY sandbox isolation. Default: same as `:chat_session`
 
-  ## model / prompt / chat_session 参数
-      model / prompt 传 models.exs / prompts.exs 中定义的 :name atom。
-      chat_session 传字符串，省略时使用 \"default\" 会话。
+  ## Examples
 
-      iex> Eai.Models.names()         # 查看所有可用模型
-      iex> Eai.Prompts.list()         # 查看所有可用 prompt
-      iex> Eai.Chat.list_chat_sessions()  # 查看所有会话
+      # Interactive
+      iex> Eai.Chat.talk()
+
+      # One-shot, defaults
+      iex> Eai.Chat.talk(content: "what time is it?", mod: :function)
+
+      # With model + prompt
+      iex> Eai.Chat.talk(content: "refactor", mod: :function, model: :claude_opus, prompt: :coder, timeout: 60_000)
+
+      # Multi-session isolation
+      iex> Eai.Chat.talk(content: "analyze", chat_session: "research", pty_session_id: "isolated")
+
+      # With chara card (overrides model + prompt)
+      iex> Eai.Chat.talk(content: "code review", mod: :function, chara_card: :backend_engineer)
+
+  ## Available Models, Prompts & Cards
+      iex> Eai.Models.names()        # => [:deepseek, :claude_opus, :gpt4o, ...]
+      iex> Eai.Prompts.names()       # => [:momoka, :coder, :analyst]
+      iex> Eai.Card.names()          # => [:backend_engineer, :frontend_dev, ...]
   """
   def talk(opts \\ []) do
     timeout = Keyword.get(opts, :timeout, :infinity)
@@ -90,43 +103,100 @@ defmodule Eai.Chat do
     end
   end
 
+  @doc """
+  Get full message history for a chat session.
+
+  ## Options
+    * `chat_session` (string) — Session name. Default: `"default"`
+
+  ## Returns
+    List of `Eai.Message.t()` in conversation order.
+  """
   def get_history(chat_session \\ "default") do
     GenServer.call(Eai.Naming.chat(), {:get_history, to_string(chat_session)})
   end
 
   @doc """
-  强制中断：设置中断标记，模型在下次轮询结果时会自动注入 Ctrl+C。
-  仅在异步交互模式下有效（同步模式会阻塞，无法调用此函数）。
+  Force interrupt current LLM task (async mode only).
+
+  Sets interrupt flag; next task poll injects Ctrl+C to running PTY process.
+  Only works in async `:human` mode (sync mode blocks IEx).
+
+  ## Options
+    * `chat_session` (string) — Session to interrupt. Default: `"default"`
+
+  ## Example
+      iex> Eai.Chat.interrupt!("work")
+      :ok
   """
   def interrupt!(chat_session \\ "default") do
     GenServer.call(Eai.Naming.chat(), {:interrupt!, to_string(chat_session)})
   end
 
-  @doc "显式关闭一个会话，释放其历史记录。不能关闭 \"default\" 会话。"
+  @doc """
+  Explicitly close a chat session and release its history.
+
+  Cannot close `"default"` session.
+
+  ## Options
+    * `name` (string) — Session name to close.
+
+  ## Example
+      iex> Eai.Chat.close_chat_session("research")
+      :ok
+  """
   def close_chat_session(name) do
     GenServer.call(Eai.Naming.chat(), {:close_chat_session, to_string(name)})
   end
 
-  @doc "列出所有活跃会话及其消息数和状态。"
+  @doc """
+  List all active chat sessions with message count and status.
+
+  ## Returns
+      `[{session_name, message_count, status}, ...]`
+      where status is `:idle` or `:busy`
+  """
   def list_chat_sessions do
     GenServer.call(Eai.Naming.chat(), :list_chat_sessions)
   end
 
   @doc """
-  导出指定会话的对话历史为 Record 兼容的 gzip 文件。
-  由 LLM 工具 `export_context` 或用户手动调用。
+  Export chat session history to a gzip file.
+
+  Called by LLM tool `export_context` or manually.
+
+  ## Options
+    * `file_path` (string) — Destination file path.
+    * `chat_session` (string) — Session to export. Default: `"default"`
+
+  ## Returns
+      `{:ok, info}` or `{:error, reason}`
+
+  ## Example
+      iex> Eai.Chat.export_history("/tmp/session.gz", "work")
+      {:ok, %{size_bytes: 5432, message_count: 42}}
   """
   def export_history(file_path, chat_session \\ "default") do
     GenServer.call(Eai.Naming.chat(), {:export_history, file_path, to_string(chat_session)})
   end
 
   @doc """
-  从 Record 兼容的 gzip 文件加载消息列表，替换指定会话的对话历史。
+  Load chat history from a gzip file and replace session's messages.
 
-  format 参数:
-    \"converse\" (默认) — 消息已是 Eai.Message IR 格式
-    \"openai\"         — 消息为 OpenAI 格式，需要适配器转换
-    \"anthropic\"      — 消息为 Anthropic 格式，需要适配器转换
+  ## Options
+    * `file_path` (string) — Source gzip file path.
+    * `chat_session` (string) — Target session. Default: `"default"`
+    * `format` (string) — Message format. Default: `"converse"`
+      - `"converse"` — already in `Eai.Message` IR format
+      - `"openai"` — needs OpenAI adapter conversion
+      - `"anthropic"` — needs Anthropic adapter conversion
+
+  ## Returns
+      `{:ok, info}` or `{:error, reason}`
+
+  ## Example
+      iex> Eai.Chat.replace_history("/tmp/session.gz", "work_restored")
+      {:ok, %{message_count: 42, chat_session: "work_restored"}}
   """
   def replace_history(file_path, chat_session \\ "default", format \\ "converse") do
     GenServer.call(
@@ -174,7 +244,7 @@ defmodule Eai.Chat do
         {:talk_async, message, timeout, model_opt, prompt_opt, chara_card_opt, chat_session, pty_session}
       )
 
-      IO.puts("Task submitted. Use Eai.Chat.interrupt!(\"#{chat_session}\") to cancel its current task, or Eai.Task.trigger_timeout_window(\"#{pty_session}\") to stop the loop and nudge the model to wrap up.")
+      IO.puts(~s|Task submitted. Use Eai.Chat.interrupt!("#{chat_session}") to cancel its current task, or Eai.Task.trigger_timeout_window("#{pty_session}") to stop the loop and nudge the model to wrap up.|)
     end
   end
 

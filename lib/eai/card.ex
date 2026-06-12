@@ -19,7 +19,14 @@ defmodule Eai.Card do
 
   # ── Public API ──────────────────────────────────────────────────────
 
-  @doc "Returns all loaded card entries as keyword lists."
+  @doc """
+  Get all registered character cards from config/chara_cards/.
+
+  Cards are loaded from `:persistent_term` cache (set by `reload/0`).
+
+  ## Returns
+      List of card keyword lists with keys: `:name`, `:description`, `:model`, `:system_prompt`, `:tools`, `:pre_context`
+  """
   @spec all() :: [keyword()]
   def all do
     case :persistent_term.get(:eai_chara_cards, :not_found) do
@@ -28,21 +35,53 @@ defmodule Eai.Card do
     end
   end
 
-  @doc "Reload cards from disk (useful after editing a card file)."
+  @doc """
+  Force reload character card registry from disk.
+
+  Useful after editing a `.json` file in `config/chara_cards/`.
+
+  ## Returns
+      List of all reloaded card entries.
+  """
   @spec reload() :: [keyword()]
   def reload, do: load_cards()
 
-  @doc "Return card name atoms."
+  @doc """
+  Get list of all registered card names (atoms).
+
+  ## Example
+      iex> Eai.Card.names()
+      [:backend_engineer, :frontend_dev, :research_analyst]
+  """
   @spec names() :: [atom()]
   def names, do: Enum.map(all(), & &1[:name])
 
-  @doc "Get card by name atom. Returns nil if not found."
+  @doc """
+  Look up card by `:name` atom.
+
+  Returns `nil` if not found.
+
+  ## Options
+    * `name` (atom) — Card name.
+
+  ## Example
+      iex> Eai.Card.get(:backend_engineer)
+      [name: :backend_engineer, description: "...", model: :claude_opus, system_prompt: "...", ...]
+  """
   @spec get(atom()) :: keyword() | nil
   def get(name) when is_atom(name) do
     Enum.find(all(), fn c -> c[:name] == name end)
   end
 
-  @doc "Get card by name atom, raise if missing."
+  @doc """
+  Look up card by `:name` atom. Raises if not found.
+
+  ## Options
+    * `name` (atom) — Card name.
+
+  ## Raises
+      ArgumentError if card not found.
+  """
   @spec get!(atom()) :: keyword()
   def get!(name) do
     case get(name) do
@@ -51,7 +90,18 @@ defmodule Eai.Card do
     end
   end
 
-  @doc "Print name → description table."
+  @doc """
+  Print formatted table of available character cards and descriptions.
+
+  ## Example
+      iex> Eai.Card.list()
+      
+      Available chara cards:
+      
+        :backend_engineer      Scalability-focused, error handling specialist
+        :frontend_dev          UI/UX focused, accessibility aware
+        :research_analyst      Structured reasoning, hypothesis-driven
+  """
   @spec list() :: :ok
   def list do
     IO.puts("\nAvailable chara cards:\n")
@@ -64,10 +114,21 @@ defmodule Eai.Card do
   end
 
   @doc """
-  Build run_opts from a card for Direct.run / Chat.talk.
+  Convert card to options for `Chat.talk/1` or `LLM.Direct.run/3`.
 
-  Returns a keyword list with :model, :system_prompt (overrides),
-  and :card_pre_context (raw messages list to inject).
+  Returns keyword list extracting card fields:
+  - `:model` — if card specifies a model override
+  - `:card_system_prompt` — role-level system prompt
+  - `:card_tools` — allowlist of tool names
+  - `:card_pre_context` — pre-loaded context messages (for prefix caching)
+
+  ## Options
+    * `card` — Card keyword list from `Card.get/1` or `Card.all/0`.
+
+  ## Example
+      iex> card = Eai.Card.get!(:backend_engineer)
+      iex> Eai.Card.to_opts(card)
+      [model: :claude_opus, card_system_prompt: "You are a backend...", card_tools: ["execute_script", "call_subagent"]]
   """
   @spec to_opts(keyword()) :: keyword()
   def to_opts(card) do
@@ -88,13 +149,7 @@ defmodule Eai.Card do
           files
           |> Enum.filter(&String.ends_with?(&1, ".json"))
           |> Enum.sort()
-          |> Enum.flat_map(fn file ->
-            path = Path.join(@cards_dir, file)
-            case File.read(path) do
-              {:ok, body} -> parse_card(body, file)
-              {:error, _} -> []
-            end
-          end)
+          |> Enum.flat_map(&load_card_file/1)
 
         {:error, _} ->
           []
@@ -102,6 +157,15 @@ defmodule Eai.Card do
 
     :persistent_term.put(:eai_chara_cards, cards)
     cards
+  end
+
+  defp load_card_file(file) do
+    path = Path.join(@cards_dir, file)
+
+    case File.read(path) do
+      {:ok, body} -> parse_card(body, file)
+      {:error, _} -> []
+    end
   end
 
   defp parse_card(body, source_file) do
@@ -118,35 +182,8 @@ defmodule Eai.Card do
   end
 
   defp extract_card(json, _source_file) do
-    data = json["data"] || %{}
-    ext = data["extensions"] || %{}
-    eai_ext = ext["eai"] || %{}
-
-    name_str = data["name"] || ""
-    system_prompt = data["system_prompt"] || ""
-    description = data["description"] || ""
-
-    model_raw = eai_ext["model"]
-    model = if model_raw, do: String.to_atom(model_raw)
-
-    tools = eai_ext["tools"]
-    prompt_ref_raw = eai_ext["prompt"]
-    prompt_ref = if prompt_ref_raw, do: String.to_atom(prompt_ref_raw)
-
-    pre_context_b64 = eai_ext["pre_context"]
-
-    # Decode pre_context if present
-    pre_context =
-      if pre_context_b64 && pre_context_b64 != "" do
-        try do
-          pre_context_b64
-          |> Base.decode64!()
-          |> :zlib.gunzip()
-          |> :erlang.binary_to_term()
-        rescue
-          _ -> nil
-        end
-      end
+    {name_str, system_prompt, description} = extract_card_fields(json)
+    {model, tools, prompt_ref, pre_context} = extract_eai_fields(json)
 
     card_name =
       if name_str != "",
@@ -164,5 +201,42 @@ defmodule Eai.Card do
         pre_context: pre_context
       ]
     end
+  end
+
+  defp extract_card_fields(json) do
+    data = json["data"] || %{}
+    name_str = data["name"] || ""
+    system_prompt = data["system_prompt"] || ""
+    description = data["description"] || ""
+    {name_str, system_prompt, description}
+  end
+
+  defp extract_eai_fields(json) do
+    data = json["data"] || %{}
+    ext = data["extensions"] || %{}
+    eai_ext = ext["eai"] || %{}
+
+    model_raw = eai_ext["model"]
+    model = if model_raw, do: String.to_atom(model_raw)
+
+    tools = eai_ext["tools"]
+    prompt_ref_raw = eai_ext["prompt"]
+    prompt_ref = if prompt_ref_raw, do: String.to_atom(prompt_ref_raw)
+
+    pre_context = decode_pre_context(eai_ext["pre_context"])
+
+    {model, tools, prompt_ref, pre_context}
+  end
+
+  defp decode_pre_context(nil), do: nil
+  defp decode_pre_context(""), do: nil
+
+  defp decode_pre_context(pre_context_b64) do
+    pre_context_b64
+    |> Base.decode64!()
+    |> :zlib.gunzip()
+    |> :erlang.binary_to_term()
+  rescue
+    _ -> nil
   end
 end

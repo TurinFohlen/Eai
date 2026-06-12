@@ -45,6 +45,45 @@ defmodule Eai.LLM.Direct do
 
   # ── Public API ───────────────────────────────────────────────────────
 
+  @doc """
+  Run LLM tool-calling loop with messages.
+
+  Internal API called by `Chat.talk/1`. Handles model selection, adapter routing,
+  tool execution, and result polling.
+
+  ## Options (map)
+
+    * `:model` (atom) — Model name: `:deepseek`, `:claude_opus`, etc.
+                        Default: from config `:default_model`
+    * `:prompt` (atom) — System prompt: `:momoka`, `:coder`, `:analyst`, etc.
+                         Default: `:momoka`
+    * `:chat_session_id` (string) — Session for multi-session isolation.
+                                     Default: `"default"`
+    * `:card_system_prompt` (string) — Extra system prompt (role layer, appended).
+                                        Default: nil
+    * `:card_tools` (list) — Allowlist of tool names. Default: all tools
+    * `:card_pre_context` (list) — Pre-loaded messages (for prefix caching).
+                                    Default: nil
+
+  **Internal fields** (filled automatically by `Chat.talk`, do NOT set externally):
+    * `:provider` — Adapter provider (`:anthropic`, `:openai_compat`, etc.)
+    * `:api_key` — LLM API key (from env)
+    * `:url` — LLM endpoint URL
+    * `:receive_timeout` — HTTP timeout in ms
+    * `:reasoning_effort` — Model-specific (e.g., "high" for DeepSeek)
+    * `:model_str` — Actual model string for API
+
+  ## Returns
+      `{:ok, final_reply}` or `{:error, reason}`
+
+  ## Example (internal, called by Chat.talk)
+      iex> Eai.LLM.Direct.run(
+        messages,
+        "default",
+        %{model: :deepseek, prompt: :coder, chat_session_id: "work"}
+      )
+      {:ok, "Here's the refactored code..."}
+  """
   def run(messages, pty_session_id \\ "default", opts \\ %{}) do
     entry = resolve_model_entry(opts)
     chat_session_id = Map.get(opts, :chat_session_id, "default") |> to_string()
@@ -58,36 +97,7 @@ defmodule Eai.LLM.Direct do
     effort = Map.get(opts, :reasoning_effort, entry[:reasoning_effort])
     prompt = resolve_prompt(Map.get(opts, :system_prompt))
 
-    # ── Card pre_context injection ────────────────────────────────
-    card_pre = Map.get(opts, :card_pre_context)
-    messages = if is_list(card_pre) and card_pre != [] do
-      card_pre ++ messages
-    else
-      messages
-    end
-
-    # ── Card system_prompt merge ──────────────────────────────────
-    card_sys = Map.get(opts, :card_system_prompt)
-    prompt = if card_sys && card_sys != "" do
-      prompt <> "
-
----
-## Role
-" <> card_sys
-    else
-      prompt
-    end
-
-    # ── Tool filtering ────────────────────────────────────────────
-    card_tools = Map.get(opts, :card_tools)
-    %{schemas: schemas} = tools()
-    schemas = if is_list(card_tools) do
-      allowed = MapSet.new(card_tools)
-      Enum.filter(schemas, fn s -> MapSet.member?(allowed, s.function.name) end)
-    else
-      schemas
-    end
-    opts = if is_list(card_tools), do: Map.put(opts, :tools_allowlist, MapSet.new(card_tools)), else: opts
+    {messages, prompt, schemas, opts} = prepare_run_context(messages, prompt, opts)
 
     adapter_opts = [reasoning_effort: effort]
     req = adapter.to_request_body(messages, model, prompt, schemas, adapter_opts)
@@ -104,6 +114,40 @@ defmodule Eai.LLM.Direct do
       chat_session_id,
       opts
     )
+  end
+
+  # ── Run context preparation (extracted to reduce CC) ────────────────
+
+  defp prepare_run_context(messages, prompt, opts) do
+    # Card pre_context injection
+    card_pre = Map.get(opts, :card_pre_context)
+    messages = if is_list(card_pre) and card_pre != [] do
+      card_pre ++ messages
+    else
+      messages
+    end
+
+    # Card system_prompt merge
+    card_sys = Map.get(opts, :card_system_prompt)
+    prompt = if card_sys && card_sys != "" do
+      prompt <> "\n\n---\n## Role\n" <> card_sys
+    else
+      prompt
+    end
+
+    # Tool filtering
+    card_tools = Map.get(opts, :card_tools)
+    %{schemas: schemas} = tools()
+    {schemas, opts} =
+      if is_list(card_tools) do
+        allowed = MapSet.new(card_tools)
+        filtered = Enum.filter(schemas, fn s -> MapSet.member?(allowed, s.function.name) end)
+        {filtered, Map.put(opts, :tools_allowlist, allowed)}
+      else
+        {schemas, opts}
+      end
+
+    {messages, prompt, schemas, opts}
   end
 
   defp execute_request(
@@ -185,7 +229,7 @@ defmodule Eai.LLM.Direct do
     end
   end
 
-  # ── Response routing ─────────────────────────────────────────────────
+  # ── Response routing ────────────────────────────────────────────────
 
   defp handle_response(assistant_msg, history, pty_session_id, chat_session_id, opts) do
     history = history ++ [assistant_msg]
@@ -198,7 +242,7 @@ defmodule Eai.LLM.Direct do
     end
   end
 
-  # ── Tool execution loop ──────────────────────────────────────────────
+  # ── Tool execution loop ─────────────────────────────────────────────
 
   defp handle_tool_calls(assistant_msg, history, pty_session_id, chat_session_id, opts) do
     %{dispatch: dispatch} = tools()
@@ -279,19 +323,21 @@ defmodule Eai.LLM.Direct do
     {clean, _} =
       all_messages
       |> Enum.reverse()
-      |> Enum.reduce({[], false}, fn msg, {acc, kept_running} ->
-        case classify_task_poll(msg) do
-          {:running_user, _tool_use_id} ->
-            if kept_running, do: {acc, :skip_assistant}, else: {[msg | acc], true}
-
-          :assistant_poll_tool ->
-            if kept_running == :skip_assistant, do: {acc, false}, else: {[msg | acc], kept_running}
-
-          _ ->
-            {[msg | acc], kept_running}
-        end
-      end)
+      |> Enum.reduce({[], false}, &reduce_task_poll/2)
     clean
+  end
+
+  defp reduce_task_poll(msg, {acc, kept_running}) do
+    case classify_task_poll(msg) do
+      {:running_user, _tool_use_id} ->
+        if kept_running, do: {acc, :skip_assistant}, else: {[msg | acc], true}
+
+      :assistant_poll_tool ->
+        if kept_running == :skip_assistant, do: {acc, false}, else: {[msg | acc], kept_running}
+
+      _ ->
+        {[msg | acc], kept_running}
+    end
   end
 
   defp classify_task_poll(%{role: :user, content: [{:tool_result, kw}]}) do
@@ -329,19 +375,21 @@ defmodule Eai.LLM.Direct do
     {clean, _} =
       all_messages
       |> Enum.reverse()
-      |> Enum.reduce({[], false}, fn msg, {acc, kept_running} ->
-        case classify_subagent_poll(msg) do
-          {:running_user, _tool_use_id} ->
-            if kept_running, do: {acc, :skip_assistant}, else: {[msg | acc], true}
-
-          :assistant_poll_tool ->
-            if kept_running == :skip_assistant, do: {acc, false}, else: {[msg | acc], kept_running}
-
-          _ ->
-            {[msg | acc], kept_running}
-        end
-      end)
+      |> Enum.reduce({[], false}, &reduce_subagent_poll/2)
     clean
+  end
+
+  defp reduce_subagent_poll(msg, {acc, kept_running}) do
+    case classify_subagent_poll(msg) do
+      {:running_user, _tool_use_id} ->
+        if kept_running, do: {acc, :skip_assistant}, else: {[msg | acc], true}
+
+      :assistant_poll_tool ->
+        if kept_running == :skip_assistant, do: {acc, false}, else: {[msg | acc], kept_running}
+
+      _ ->
+        {[msg | acc], kept_running}
+    end
   end
 
   defp classify_subagent_poll(%{role: :user, content: [{:tool_result, kw}]}) do
