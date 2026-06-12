@@ -15,6 +15,7 @@ defmodule Eai.Application do
           {Phoenix.PubSub, name: Eai.Naming.pubsub()},
           Eai.Cache.Cache,
           Eai.Sandbox.PTYPool,
+          Eai.MCP,
           {Eai.Chat, []}
         ]
       else

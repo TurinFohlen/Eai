@@ -32,8 +32,15 @@ defmodule Eai.LLM.Direct do
     dispatch = Map.new(modules, fn mod -> {mod.schema().function.name, mod} end)
     registry = %{schemas: schemas, dispatch: dispatch}
 
-    :persistent_term.put(:eai_llm_tools, registry)
-    registry
+    # Merge: preserve any MCP tools already registered by Eai.MCP
+    existing = :persistent_term.get(:eai_llm_tools, %{schemas: [], dispatch: %{}})
+    merged = %{
+      schemas: existing.schemas ++ registry.schemas,
+      dispatch: Map.merge(existing.dispatch, registry.dispatch)
+    }
+
+    :persistent_term.put(:eai_llm_tools, merged)
+    merged
   end
 
   defp tools do

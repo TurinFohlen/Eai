@@ -71,3 +71,4 @@ config :eai, :telemetry_events, [
 
 # ── 环境特定配置覆盖 ──────────────────────────────────────────────────────────
 import_config "#{config_env()}.exs"
+import_config "mcp_servers.exs"
