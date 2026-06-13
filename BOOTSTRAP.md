@@ -437,4 +437,65 @@ Eai.help()
 
 ---
 
-*Generated from codebase analysis. Last updated: version 0.1.12.*
+## 12. Debug & Telemetry
+
+### 12.1 Telemetry event catalog
+
+All `:telemetry.execute/3` calls land on a single handler: `Eai.TelemetryHandler.handle_event/4`, which logs structured events with `event / label / measurements / metadata` fields. Configure labels in `config/config.exs` under `:telemetry_events`.
+
+| Event | Where | When |
+|-------|-------|------|
+| `[:eai, :session, :spawn]` | `Eai.Sandbox.PTYPool.get_or_create/2` | New PTY session spawned |
+| `[:eai, :session, :reset]` | `Eai.Sandbox.PTYPool` | Force-reset on session |
+| `[:eai, :task, :start]` | `Eai.LLM.Direct` | Task submitted |
+| `[:eai, :task, :chunk]` | `Eai.Sandbox.PTYPool.handle_info({:pty_data, ...})` | PTY chunk received (per `on_data` callback) |
+| `[:eai, :task, :complete]` | `Eai.Sandbox.PTYPool` | Task complete |
+| `[:eai, :task, :timeout]` | `Eai.Task` | Task timed out |
+| `[:eai, :llm, :request, :start \| :stop \| :error]` | `Eai.LLM.Direct` | LLM roundtrip |
+| `[:eai, :tool, :execute \| :error]` | `Eai.LLM.Direct` | Tool execution |
+| `[:eai, :adapter, :anthropic, :*]` | `Eai.Adapter.Anthropic` | `to_request_body` / `from_response` / `from_messages` |
+| `[:eai, :adapter, :converse, :*]` | `Eai.Adapter.Converse` | (same three) |
+| `[:eai, :adapter, :openai, :*]` | `Eai.Adapter.OpenAI` | (same three) |
+| `[:eai, :adapter, :mcp, :do_execute, :start \| :stop \| :error]` | `Eai.MCP.Adapter.do_execute/5` | Per-MCP-tool-call |
+
+### 12.2 Shared cooldown (`poll_cooldown_ms`)
+
+`poll_cooldown_ms` is shared between two paths so MCP tool calls and `get_task_result` polls cannot outrun the LLM-side poller:
+
+- `Eai.MCP.Adapter.do_execute/5` — sleeps `poll_cooldown_ms` at function entry (before `Anubis.Client.call_tool`).
+- Tool implementations of `get_task_result` / `get_subagent_result` — sleep after every poll (see `config/tools/*`).
+
+Tune at runtime via `set_config(poll_cooldown_ms = 3000)`.
+
+### 12.3 Shared timeout window
+
+`Eai.ResultCollector.check_timeout_window/1` is called at the tail of two paths, consuming one depth layer and appending a "wrap up" reminder to the result string:
+
+- `Eai.MCP.Adapter.do_execute/5` — appends reminder to MCP tool result when `pty_session_id` is non-nil.
+- `get_task_result` tool — appends reminder to task result.
+
+Trigger from IEx with `Eai.Task.trigger_timeout_window("default", depth)` (default depth = 1).
+
+### 12.4 Common runtime warnings
+
+| Warning | Cause | Action |
+|---------|-------|--------|
+| `mtime ... was set to the future, resetting to now` | FS clock skew between container and host | Harmless; ignore or `touch` the file |
+| `unused require Logger` in `lib/eai/adapter/*.ex` | Adapter used to log via Logger, now uses `:telemetry.execute` | Already migrated; if it reappears, the adapter lost its telemetry call |
+| `File.exists?(priv_link)` type warning | Was passing `nil` to `File.exists?/1` | Fixed by routing `nil` cases through the early `priv_src == nil` branch in `Eai.Sandbox.PTYPool.maybe_link_priv/3` |
+| `dialyzer: pattern can never match the type` | Dead branch after type narrowing | Inspect the type spec; usually means a defensive branch is unreachable — delete it |
+
+### 12.5 Application boot order
+
+`Eai.Application.start/2` builds a supervisor tree that, when `:start_application` is true:
+
+1. `Phoenix.PubSub` (`Eai.Naming.pubsub()`)
+2. `Eai.Cache.Cache`
+3. `Eai.Sandbox.PTYPool`
+4. `Eai.MCP`
+5. `{Eai.Chat, []}`
+6. `Eai.API` (only when `config :eai, :api, enabled: true`) — started as an explicit child spec wrapping `Bandit.start_link/1`, not as the module itself. If you change `Eai.API` to a `use GenServer`, also remove the custom child spec.
+
+---
+
+*Generated from codebase analysis. Last updated: version 0.1.13.*

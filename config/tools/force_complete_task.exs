@@ -36,13 +36,8 @@ defmodule Eai.Tool.ForceCompleteTask do
     task_id = Map.get(args, "task_id", "")
     target = Map.get(args, "pty_session_id", pty_session_id)
 
-    case Eai.Task.force_complete(task_id) do
-      {:ok, output} ->
-        Eai.Naming.pool().clear_task(target, task_id)
-        %{status: "complete", output: output} |> Eai.Utils.sanitize_value() |> Jason.encode!()
-
-      _ ->
-        Jason.encode!(%{error: "force_complete failed or task not found"})
-    end
+    {:ok, output} = Eai.Task.force_complete(task_id)
+    Eai.Naming.pool().clear_task(target, task_id)
+    %{status: "complete", output: output} |> Eai.Utils.sanitize_value() |> Jason.encode!()
   end
 end

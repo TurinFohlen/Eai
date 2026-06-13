@@ -106,16 +106,11 @@ defmodule Eai.Tool.ExecuteScript do
 
         _ when max_loops <= 0 ->
           Logger.warning("SBC timeout for #{task_id}, force-completing")
-          case Eai.Task.force_complete(task_id) do
-            {:ok, output} ->
-              Eai.Naming.pool().clear_task(pty_session_id, task_id)
-              %{status: "timeout", output: output, task_id: task_id}
-              |> Eai.Utils.sanitize_value()
-              |> Jason.encode!()
-            _ ->
-              %{error: "SBC timeout — task never completed", task_id: task_id}
-              |> Jason.encode!()
-          end
+          {:ok, output} = Eai.Task.force_complete(task_id)
+          Eai.Naming.pool().clear_task(pty_session_id, task_id)
+          %{status: "timeout", output: output, task_id: task_id}
+          |> Eai.Utils.sanitize_value()
+          |> Jason.encode!()
 
         _ ->
           sbc_wait(task_id, pty_session_id, max_loops - 1)

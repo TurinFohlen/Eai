@@ -6,6 +6,8 @@ defmodule Eai.MCP.Adapter do
   that delegates to `do_execute/5` with the server_id and tool_name baked in.
   """
 
+  alias Anubis.MCP.Response
+
   @doc """
   Build a runtime module for one MCP tool.
 
@@ -59,12 +61,19 @@ defmodule Eai.MCP.Adapter do
   end
 
   @doc false
-  def do_execute(server_id, tool_name, args, _pty_session_id, _chat_session_id) do
+  def do_execute(server_id, tool_name, args, pty_session_id, _chat_session_id) do
     :telemetry.execute(
       [:eai, :adapter, :mcp, :do_execute, :start],
       %{system_time: System.system_time()},
-      %{server_id: server_id, tool_name: tool_name}
+      %{server_id: server_id, tool_name: tool_name, pty_session_id: pty_session_id}
     )
+
+    # Share the same poll_cooldown_ms that get_task_result uses, so MCP tool
+    # calls can't fire faster than the LLM-side poller. Pinned here (not in
+    # ExPTY on_data) because the terminal stream itself is fine — only the
+    # MCP-driven pull loop was racing.
+    cooldown = Eai.Tool.Helpers.poll_cooldown_ms()
+    if is_integer(cooldown) and cooldown > 0, do: Process.sleep(cooldown)
 
     sanitized = Eai.Utils.sanitize_value(args)
 
@@ -72,7 +81,7 @@ defmodule Eai.MCP.Adapter do
       case Anubis.Client.call_tool(server_id, tool_name, sanitized) do
         {:ok, response} ->
           response
-          |> Anubis.MCP.Response.unwrap()
+          |> Response.unwrap()
           |> extract_text()
           |> Eai.Utils.sanitize_value()
           |> Jason.encode!()
@@ -91,10 +100,15 @@ defmodule Eai.MCP.Adapter do
     :telemetry.execute(
       [:eai, :adapter, :mcp, :do_execute, :stop],
       %{system_time: System.system_time(), byte_size: byte_size(result)},
-      %{server_id: server_id, tool_name: tool_name}
+      %{server_id: server_id, tool_name: tool_name, pty_session_id: pty_session_id}
     )
 
-    result
+    # Mirror the timeout-window check used by get_task_result. If the user
+    # triggered Eai.Task.trigger_timeout_window(pty_session_id), each MCP
+    # call here will consume one layer of the depth and append a reminder
+    # so the LLM-side loop can wrap up.
+    timeout_nudge = if pty_session_id, do: Eai.ResultCollector.check_timeout_window(pty_session_id)
+    timeout_nudge && (result <> "\n\n" <> timeout_nudge) || result
   end
 
   # ── helpers ──────────────────────────────────────────────────────────

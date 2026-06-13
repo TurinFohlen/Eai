@@ -17,6 +17,7 @@ defmodule Eai.MCP do
 
   use GenServer
   require Logger
+  alias Eai.MCP.Adapter
 
   @mcp_config_dir "config/mcp_servers"
   @valid_transports [:stdio, :streamable_http, :sse, :websocket]
@@ -303,7 +304,7 @@ defmodule Eai.MCP do
       desc = tool["description"] || ""
       input_schema = tool["inputSchema"] || %{}
 
-      {mod, schema} = Eai.MCP.Adapter.build_tool_module(id, name, input_schema, desc)
+      {mod, schema} = Adapter.build_tool_module(id, name, input_schema, desc)
       tool_name = "#{id}:#{name}"
       {[schema | s_acc], Map.put(d_acc, tool_name, mod)}
     end)

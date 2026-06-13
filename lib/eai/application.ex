@@ -8,9 +8,9 @@ defmodule Eai.Application do
 
     children =
       if Application.get_env(:eai, :start_application, true) do
-        IO.puts("ℹ️  EAI started.\n")
-        IO.puts("ℹ️  Type Eai.help() for full documentation.\n")
-
+        IO.puts("ℹ️   EAI started.\n")
+        IO.puts("ℹ️   Type Eai.help() for full documentation.\n")
+        IO.puts("ℹ️   Type Eai.Chat.talk() to chat.\n")
         api_children =
           if Application.get_env(:eai, :api, [])[:enabled] != false do
             [api_child_spec()]
