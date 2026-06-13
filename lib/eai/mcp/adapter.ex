@@ -6,8 +6,6 @@ defmodule Eai.MCP.Adapter do
   that delegates to `do_execute/5` with the server_id and tool_name baked in.
   """
 
-  require Logger
-
   @doc """
   Build a runtime module for one MCP tool.
 
@@ -62,30 +60,51 @@ defmodule Eai.MCP.Adapter do
 
   @doc false
   def do_execute(server_id, tool_name, args, _pty_session_id, _chat_session_id) do
+    :telemetry.execute(
+      [:eai, :adapter, :mcp, :do_execute, :start],
+      %{system_time: System.system_time()},
+      %{server_id: server_id, tool_name: tool_name}
+    )
+
     sanitized = Eai.Utils.sanitize_value(args)
 
-    case Anubis.Client.call_tool(server_id, tool_name, sanitized) do
-      {:ok, response} ->
-        extract_text(response)
-        |> Eai.Utils.sanitize_value()
-        |> Jason.encode!()
+    result =
+      case Anubis.Client.call_tool(server_id, tool_name, sanitized) do
+        {:ok, response} ->
+          response
+          |> Anubis.MCP.Response.unwrap()
+          |> extract_text()
+          |> Eai.Utils.sanitize_value()
+          |> Jason.encode!()
 
-      {:error, error} ->
-        %{error: "MCP tool '#{tool_name}' on #{server_id} failed: #{inspect(error)}"}
-        |> Jason.encode!()
-    end
+        {:error, error} ->
+          :telemetry.execute(
+            [:eai, :adapter, :mcp, :do_execute, :error],
+            %{system_time: System.system_time()},
+            %{server_id: server_id, tool_name: tool_name, error: inspect(error)}
+          )
+
+          %{error: "MCP tool '#{tool_name}' on #{server_id} failed: #{inspect(error)}"}
+          |> Jason.encode!()
+      end
+
+    :telemetry.execute(
+      [:eai, :adapter, :mcp, :do_execute, :stop],
+      %{system_time: System.system_time(), byte_size: byte_size(result)},
+      %{server_id: server_id, tool_name: tool_name}
+    )
+
+    result
   end
 
   # ── helpers ──────────────────────────────────────────────────────────
 
-  defp extract_text(%{content: content}) when is_list(content) do
-    content
-    |> Enum.map(fn
+  defp extract_text(%{"content" => content}) when is_list(content) do
+    Enum.map_join(content, "\n", fn
       %{"type" => "text", "text" => t} -> t
       %{"type" => "resource", "resource" => r} -> "[resource: #{inspect(r)}]"
       other -> inspect(other)
     end)
-    |> Enum.join("\n")
   end
 
   defp extract_text(other), do: inspect(other)

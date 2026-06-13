@@ -4,7 +4,7 @@ defmodule Eai.MixProject do
   def project do
     [
       app: :eai,
-      version: "0.1.12",
+      version: "0.1.13",
       elixir: "~> 1.19",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -22,6 +22,9 @@ defmodule Eai.MixProject do
 
   defp deps do
     [
+      # HTTP server (API endpoint)
+      {:bandit, "~> 1.0"},
+
       # HTTP client
       {:req, "~> 0.5"},
       {:finch, "~> 0.19"},

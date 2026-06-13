@@ -63,7 +63,19 @@ config :eai, :telemetry_events, [
   {[:eai, :llm, :request, :stop], "LLM request stop"},
   {[:eai, :tool, :execute], "Tool executed"},
   {[:eai, :llm, :request, :error], "LLM request error"},
-  {[:eai, :tool, :error], "Tool execution error"}
+  {[:eai, :tool, :error], "Tool execution error"},
+  {[:eai, :adapter, :anthropic, :to_request_body], "Anthropic adapter to_request_body"},
+  {[:eai, :adapter, :anthropic, :from_response], "Anthropic adapter from_response"},
+  {[:eai, :adapter, :anthropic, :from_messages], "Anthropic adapter from_messages"},
+  {[:eai, :adapter, :converse, :to_request_body], "Converse adapter to_request_body"},
+  {[:eai, :adapter, :converse, :from_response], "Converse adapter from_response"},
+  {[:eai, :adapter, :converse, :from_messages], "Converse adapter from_messages"},
+  {[:eai, :adapter, :openai, :to_request_body], "OpenAI adapter to_request_body"},
+  {[:eai, :adapter, :openai, :from_response], "OpenAI adapter from_response"},
+  {[:eai, :adapter, :openai, :from_messages], "OpenAI adapter from_messages"},
+  {[:eai, :adapter, :mcp, :do_execute, :start], "MCP adapter do_execute start"},
+  {[:eai, :adapter, :mcp, :do_execute, :stop], "MCP adapter do_execute stop"},
+  {[:eai, :adapter, :mcp, :do_execute, :error], "MCP adapter do_execute error"}
 ]
 
 # ── System Prompt ─────────────────────────────────────────────────────────────
@@ -71,4 +83,15 @@ config :eai, :telemetry_events, [
 
 # ── 环境特定配置覆盖 ──────────────────────────────────────────────────────────
 import_config "#{config_env()}.exs"
-import_config "mcp_servers.exs"
+# ── API Endpoint ─────────────────────────────────────────────────────────────
+# OpenAI-compatible HTTP API. External tools (chatgpt-on-wechat, bots, n8n)
+# can use eai as a drop-in OpenAI replacement.
+config :eai, :api,
+  enabled: true,
+  port: 4000,
+  host: "0.0.0.0"
+
+# ── MCP Servers ──────────────────────────────────────────────────────────────
+# Each server gets its own file under config/mcp_servers/*.exs
+# To enable a server, uncomment its file (or add a new one).
+# Hot-reload at runtime: Eai.MCP.reload!()

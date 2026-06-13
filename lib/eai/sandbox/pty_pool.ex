@@ -379,15 +379,17 @@ defmodule Eai.Sandbox.PTYPool do
     end
   end
 
-  defp maybe_link_priv(_id, priv_src, _priv_link) when is_nil(priv_src) do
-    Logger.warning("PTYPool priv src not found, skip symlink")
-  end
-
-  defp maybe_link_priv(_id, _priv_src, priv_link) when not is_nil(priv_link) do
-    if File.exists?(priv_link), do: :ok
-  end
-
   defp maybe_link_priv(pty_session_id, priv_src, priv_link) do
+    if priv_src == nil do
+      Logger.warning("PTYPool priv src not found, skip symlink",
+        pty_session_id: pty_session_id
+      )
+    else
+      do_link_priv(pty_session_id, priv_src, priv_link)
+    end
+  end
+
+  defp do_link_priv(pty_session_id, priv_src, priv_link) do
     cond do
       File.exists?(priv_link) ->
         :ok

@@ -2,11 +2,15 @@ defmodule Eai.Adapter.OpenAI do
   @moduledoc "OpenAI-compatible wire format adapter (also used for DeepSeek and similar providers)."
 
   @behaviour Eai.Adapter
-  require Logger
   alias Eai.Message
   @impl true
   def to_request_body(messages, model, system_prompt, tools, opts) do
     effort = Keyword.get(opts, :reasoning_effort)
+    :telemetry.execute(
+      [:eai, :adapter, :openai, :to_request_body],
+      %{msgs: length(messages), tools: length(tools)},
+      %{model: model, effort: effort}
+    )
 
     openai_messages =
       [
@@ -34,6 +38,11 @@ defmodule Eai.Adapter.OpenAI do
 
   @impl true
   def from_response(%{"choices" => [%{"message" => msg} | _]}) do
+    :telemetry.execute(
+      [:eai, :adapter, :openai, :from_response],
+      %{},
+      %{model: get_in(msg, ["role"]) || :assistant, has_reasoning: !!msg["reasoning_content"]}
+    )
     content = msg["content"]
     reasoning = msg["reasoning_content"]
     tool_calls = msg["tool_calls"]
@@ -72,6 +81,11 @@ defmodule Eai.Adapter.OpenAI do
 
   @impl true
   def from_messages(raw_messages) when is_list(raw_messages) do
+    :telemetry.execute(
+      [:eai, :adapter, :openai, :from_messages],
+      %{count: length(raw_messages)},
+      %{}
+    )
     Enum.flat_map(raw_messages, fn
       # skip system messages
       %{"role" => "system"} ->

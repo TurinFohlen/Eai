@@ -2,11 +2,15 @@ defmodule Eai.Adapter.Anthropic do
   @moduledoc "Anthropic Messages API wire format adapter."
 
   @behaviour Eai.Adapter
-  require Logger
 
   @impl true
   def to_request_body(messages, model, system_prompt, tools, opts) do
     effort = Keyword.get(opts, :reasoning_effort)
+    :telemetry.execute(
+      [:eai, :adapter, :anthropic, :to_request_body],
+      %{msgs: length(messages), tools: length(tools)},
+      %{model: model, effort: effort}
+    )
 
     # System prompt as content-block list with cache breakpoint
     system = [%{type: "text", text: system_prompt, cache_control: %{type: "ephemeral"}}]
@@ -46,6 +50,11 @@ defmodule Eai.Adapter.Anthropic do
 
   @impl true
   def from_response(%{"content" => blocks}) do
+    :telemetry.execute(
+      [:eai, :adapter, :anthropic, :from_response],
+      %{blocks: length(blocks)},
+      %{}
+    )
     ir_blocks = Enum.map(blocks, &anthropic_block_to_ir/1)
 
     ir_blocks =
@@ -60,6 +69,11 @@ defmodule Eai.Adapter.Anthropic do
 
   @impl true
   def from_messages(raw_messages) when is_list(raw_messages) do
+    :telemetry.execute(
+      [:eai, :adapter, :anthropic, :from_messages],
+      %{count: length(raw_messages)},
+      %{}
+    )
     Enum.flat_map(raw_messages, fn
       %{"role" => "user", "content" => content} ->
         blocks = content |> List.wrap() |> Enum.map(&anthropic_content_to_ir_block/1)

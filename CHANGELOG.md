@@ -1,54 +1,58 @@
 # Changelog
 
-All notable changes to Eai.
+All notable changes to this project are documented in this file.
 
----
-
-## [Unreleased]
-
-### Added
-
-- **tmux TUI** (`priv/scripts/eai-tui.sh` + `eai-input.sh`) — three-pane terminal UI wrapping IEx via PTY. Left: IEx info screen (telemetry / tool output / LLM replies). Right-bottom: input bar (ENTER to send). Ctrl+↑↓←→ focus switching. Zero internal code changes.
-- **Poll dedup for `get_subagent_result`** — `dedup_stale_subagent_polls/1` in `direct.ex`, fully independent of `dedup_stale_task_polls/1`. Only the latest `status: "running"` poll pair survives in conversation history.
-- **Chara Card V2 system** — `config/chara_cards/*.json`, `Eai.Card` module. Two-layer prompt composition (system + role). Supports tool filtering, pre_context injection, SillyTavern compatibility.
-- **`call_subagent` SBC mode** — `sbc: true` blocks until subagent completes, same pattern as `execute_script` SBC. Internal polling via `sbc_wait` reads cache; shared `dispatch_subagent/5` for both SBC and async.
-- **SBC mode for `execute_script`** — internal polling loop returns result directly, saves 2 LLM roundtrips.
+## [0.1.13] — 2026-06-13
 
 ### Fixed
 
-- **Async error silent swallow** — `Chat.handle_info` now prints `❌` / `💥` on error/crash paths instead of nothing.
+- **MCP transport format**: Changed from incorrect keyword list `[layer: ..., command: ...]` to
+  correct 2-tuple `{:stdio, command: ...}` format required by Anubis 1.6.x.
+  The old format would crash in `Anubis.Client.Supervisor.parse_transport_config/1`.
 
 ### Changed
 
-- **Poll dedup split into independent clusters** — `dedup_stale_task_polls` + `classify_task_poll` vs `dedup_stale_subagent_polls` + `classify_subagent_poll`. Explicit duplication over implicit coupling via parameterised function. (Supersedes `fdb18d0`.)
-- **`call_subagent` SBC realigned** — now uses async dispatch + internal polling instead of direct `Eai.Chat.talk` synchronous call. Same pattern as `execute_script`.
-- **`blocking` → `sbc` rename** in `call_subagent` for naming consistency.
+- **MCP config restructured**: Moved from single file `config/mcp_servers.exs` to
+  `config/mcp_servers/` directory with one `.exs` file per server. Enables:
+  - Cleaner separation of concerns (each server in its own file)
+  - Runtime hot-reload without VM restart
+  - Easy enable/disable by commenting/uncommenting individual files
 
-### Reverted
-
-- `mix eai` CLI (`1449c7f`) — premature `IO.gets`-based implementation. Replaced by tmux TUI approach.
-
----
-
-## [0.1.11] — 2026-06-04
-
-### Changed
-
-- **ResultCollector → Eai.Task** — task polling extracted to tool layer
-- **SBC mode** for `execute_script` — internal poll loop
-- **Poll dedup** — only latest `get_task_result` "running" pair kept in history
-- **Cost model** moved from system prompt into tool descriptions
-- **System prompt** shrunk 14KB → 8KB
-
----
-
-## [0.1.0] — 2026-05-26
+- **`Eai.MCP` rewritten**: State is now a struct `%{servers, ids}` instead of raw list.
+  Added `stop_server/1` for graceful teardown via `Anubis.Client.Supervisor`.
 
 ### Added
 
-- Initial Hex package release
-- Triple-notation (`<< subject, predicate, object >>`) with `dispatch.py` path calculus
-- `agent-browser` toolkit with ARM64 workaround
-- Mathematica/Wolfram integration via `math` CLI (`wolframscript` incompatible with PTY)
-- PTY session resilience — `list_pty_sessions` / `reset_session`
-- Git-based memory via `TRANSITION.md` / `PROJECT_TRANSITION.md`
+- **HTTP API endpoint** (`Eai.API`): OpenAI-compatible REST API, powered by Bandit.
+  External tools can use eai as a drop-in OpenAI replacement.
+  - `POST /v1/chat/completions` — full OpenAI-format chat completions
+  - `GET /v1/models` — list available LLM models
+  - `GET /v1/tools` — list all MCP tools
+  - `GET /v1/mcp/status` — MCP server health
+  - `GET /health` — version + quick status
+  - Config: `config :eai, :api, enabled: true, port: 4000`
+  - Ideal for chatgpt-on-wechat, n8n, custom bots, or any tool that talks OpenAI API
+
+- **`Eai.MCP.reload!/0`**: Hot-reload all MCP server configs at runtime.
+  Re-reads `config/mcp_servers/*.exs`, stops removed servers, starts new ones,
+  refreshes tool registry — no VM restart needed. Returns `{:ok, diff}` with
+  added/removed/unchanged counts.
+
+- **`Eai.MCP.status/0`**: One-shot status for all MCP servers. Returns a list of
+  `%{id, status, tools, transport}` maps — see which servers are online, how many
+  tools each exposes, and what transport they use. No more digging through logs.
+
+- **Config validation layer**: Both `start_all` and `reload!` now validate transport
+  format before passing to Anubis. Catches missing `:command` for stdio, missing `:url`
+  for streamable_http, wrong tuple format, etc. Returns clear error messages instead
+  of crashing on pattern match.
+
+- **`config/mcp_servers/npx.exs`**: Filesystem MCP server via `@modelcontextprotocol/server-filesystem`.
+  Zero-auth, npx auto-downloads. Good first-run sanity check for the MCP pipeline.
+
+- **`config/mcp_servers/gdrive.exs`**: Google Drive MCP server via `@isaacphi/mcp-gdrive`.
+  Requires one-time OAuth setup (steps in file comments).
+
+## [0.1.12] — Previous release
+
+- Initial public version.
