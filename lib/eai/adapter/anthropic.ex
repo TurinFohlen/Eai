@@ -29,6 +29,7 @@ defmodule Eai.Adapter.Anthropic do
       end
 
     anthropic_messages = messages |> Enum.flat_map(&message_to_anthropic/1)
+    anthropic_messages = mark_message_cache_breakpoints(anthropic_messages)
 
     body = %{
       model: model,
@@ -147,6 +148,62 @@ defmodule Eai.Adapter.Anthropic do
       [%{role: "assistant", content: anthropic_content}]
     end
   end
+
+  # Pin Anthropic prompt cache breakpoints on the last N assistant messages.
+  #
+  # Anthropic's cache is prefix-matched: a breakpoint at position P caches
+  # everything before P. The closer to the end, the more we save on the next
+  # turn (the entire prefix becomes a cache hit).
+  #
+  # Anthropic allows max 4 cache_control markers per request:
+  #   - system prompt:  1 (already pinned above)
+  #   - last tool:      1 (already pinned above)
+  #   - messages:       2 (we pin the last 2 assistant messages here)
+  #
+  # Each IR assistant expands to exactly one Anthropic assistant message, so
+  # "last 2 assistant messages" is stable across the flat_map expansion done
+  # in to_request_body/5.
+  @max_message_cache_breakpoints 2
+
+  defp mark_message_cache_breakpoints(msgs) do
+    assistant_indices =
+      msgs
+      |> Enum.with_index()
+      |> Enum.filter(fn {%{role: role}, _idx} -> role == "assistant" end)
+      |> Enum.map(fn {_msg, idx} -> idx end)
+      |> Enum.take(-@max_message_cache_breakpoints)
+      |> MapSet.new()
+
+    if MapSet.size(assistant_indices) == 0 do
+      msgs
+    else
+      msgs
+      |> Enum.with_index()
+      |> Enum.map(&maybe_put_cache_on_message(&1, assistant_indices))
+    end
+  end
+
+  defp maybe_put_cache_on_message({msg, idx}, assistant_indices) do
+    if MapSet.member?(assistant_indices, idx),
+      do: put_cache_on_last_block(msg),
+      else: msg
+  end
+
+  # Put a cache_control marker on the last content block of a message.
+  # Falls through unchanged if the content isn't a non-empty list (e.g. legacy
+  # string content or empty content).
+  defp put_cache_on_last_block(%{content: content} = msg) when is_list(content) and content != [] do
+    case List.pop_at(content, -1) do
+      {nil, _} ->
+        msg
+
+      {last_block, rest} ->
+        marked = Map.put(last_block, :cache_control, %{type: "ephemeral"})
+        %{msg | content: rest ++ [marked]}
+    end
+  end
+
+  defp put_cache_on_last_block(msg), do: msg
 
   # Split user blocks: text/image vs tool_result
   defp split_user_blocks(blocks) do

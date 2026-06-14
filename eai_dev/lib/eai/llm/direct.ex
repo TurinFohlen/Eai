@@ -261,11 +261,71 @@ defmodule Eai.LLM.Direct do
     end
     tool_uses = Message.tool_uses(assistant_msg)
 
-    new_user_messages =
-      tool_uses
-      |> Enum.reduce([], fn tu, acc ->
-        msg = execute_single_tool_call(tu, dispatch, pty_session_id, chat_session_id)
-        [msg | acc]
+    {new_user_messages, should_continue?} =
+      Enum.reduce(tool_uses, {[], true}, fn tu, {msgs_acc, cont} ->
+        name = tu[:name]
+        args = Eai.Utils.sanitize_value(tu[:input])
+        tool_use_id = tu[:tool_use_id]
+
+        :telemetry.execute([:eai, :tool, :pre], %{system_time: System.system_time()}, %{
+          tool: name,
+          pty_session_id: pty_session_id
+        })
+
+        content_json =
+          try do
+            case Map.fetch(dispatch, name) do
+              {:ok, mod} ->
+                # Route through Eai.Hub.run instead of bare mod.execute/3.
+                # Hub runs pre-hooks → execute → post-hooks without touching tool modules.
+                case Eai.Hub.run(mod, :execute, [args, pty_session_id, chat_session_id]) do
+                  {:ok, result} ->
+                    :telemetry.execute(
+                      [:eai, :tool, :post],
+                      %{system_time: System.system_time()},
+                      %{tool: name, pty_session_id: pty_session_id}
+                    )
+                    result
+
+                  {:block, reason} ->
+                    :telemetry.execute(
+                      [:eai, :tool, :blocked],
+                      %{system_time: System.system_time()},
+                      %{tool: name, pty_session_id: pty_session_id, reason: reason}
+                    )
+                    Jason.encode!(%{error: "tool blocked by hook: #{reason}"})
+                end
+
+              :error ->
+                Jason.encode!(%{error: "unknown tool: #{name}"})
+            end
+          rescue
+            e ->
+              :telemetry.execute([:eai, :tool, :error], %{system_time: System.system_time()}, %{
+                tool: name,
+                pty_session_id: pty_session_id,
+                error: Exception.message(e)
+              })
+
+              Jason.encode!(%{error: Exception.message(e)})
+          end
+
+        # Check for multimodal_inject
+        case Jason.decode(content_json) do
+          {:ok, %{"type" => "multimodal_inject", "blocks" => blocks}} ->
+            inject_msg = Message.from_inject_blocks(blocks)
+            {[inject_msg | msgs_acc], cont}
+
+          {:ok, _} ->
+            result_content = [{:text, content_json}]
+            tool_msg = Message.new_tool_result(tool_use_id, result_content)
+            {[tool_msg | msgs_acc], cont}
+
+          {:error, _} ->
+            result_content = [{:text, content_json}]
+            tool_msg = Message.new_tool_result(tool_use_id, result_content)
+            {[tool_msg | msgs_acc], cont}
+        end
       end)
 
     new_user_messages = Enum.reverse(new_user_messages)
@@ -274,69 +334,11 @@ defmodule Eai.LLM.Direct do
       |> dedup_stale_task_polls()
       |> dedup_stale_subagent_polls()
 
-    run(all_messages, pty_session_id, opts)
-  end
-
-  defp execute_single_tool_call(tu, dispatch, pty_session_id, chat_session_id) do
-    name = tu[:name]
-    args = Eai.Utils.sanitize_value(tu[:input])
-    tool_use_id = tu[:tool_use_id]
-
-    :telemetry.execute([:eai, :tool, :pre], %{system_time: System.system_time()}, %{
-      tool: name,
-      pty_session_id: pty_session_id
-    })
-
-    content_json =
-      try do
-        case Map.fetch(dispatch, name) do
-          {:ok, mod} ->
-            case Eai.Hub.run(mod, :execute, [args, pty_session_id, chat_session_id]) do
-              {:ok, result} ->
-                :telemetry.execute(
-                  [:eai, :tool, :post],
-                  %{system_time: System.system_time()},
-                  %{tool: name, pty_session_id: pty_session_id}
-                )
-                result
-
-              {:block, reason} ->
-                :telemetry.execute(
-                  [:eai, :tool, :blocked],
-                  %{system_time: System.system_time()},
-                  %{tool: name, pty_session_id: pty_session_id, reason: reason}
-                )
-                Jason.encode!(%{error: "tool blocked by hook: #{reason}"})
-            end
-
-          :error ->
-            Jason.encode!(%{error: "unknown tool: #{name}"})
-        end
-      rescue
-        e ->
-          :telemetry.execute([:eai, :tool, :error], %{system_time: System.system_time()}, %{
-            tool: name,
-            pty_session_id: pty_session_id,
-            error: Exception.message(e)
-          })
-
-          Jason.encode!(%{error: Exception.message(e)})
-      end
-
-    case Jason.decode(content_json) do
-      {:ok, %{"type" => "multimodal_inject", "blocks" => blocks}} ->
-        inject_msg = Message.from_inject_blocks(blocks)
-        inject_msg
-
-      {:ok, _} ->
-        result_content = [{:text, content_json}]
-        tool_msg = Message.new_tool_result(tool_use_id, result_content)
-        tool_msg
-
-      {:error, _} ->
-        result_content = [{:text, content_json}]
-        tool_msg = Message.new_tool_result(tool_use_id, result_content)
-        tool_msg
+    if should_continue? do
+      run(all_messages, pty_session_id, opts)
+    else
+      text = Message.text(assistant_msg)
+      {:ok, Eai.Utils.sanitize_value(text), history}
     end
   end
 

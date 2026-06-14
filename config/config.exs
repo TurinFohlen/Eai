@@ -3,25 +3,31 @@ import Config
 # ── Logger 元数据键声明 ───────────────────────────────────────────────────────
 config :logger, :console,
   metadata: [
-    :pty_session_id,
-    :task_id,
-    :current_task,
-    :pty,
-    :msg,
-    :priv_src,
-    :src,
-    :link,
-    :reason,
-    :state,
-    :output_bytes,
-    :size,
+    :body,
     :buffer,
+    :callback,
+    :current_task,
+    :dir,
     :duration_ms,
+    :error,
     :event,
+    :file,
+    :hook,
+    :hooks,
     :label,
+    :link,
     :measurements,
     :metadata,
-    :body
+    :msg,
+    :output_bytes,
+    :priv_src,
+    :pty,
+    :pty_session_id,
+    :reason,
+    :size,
+    :src,
+    :state,
+    :task_id
   ]
 
 # ── 默认模型 ──────────────────────────────────────────────────────────────────
@@ -88,7 +94,7 @@ import_config "#{config_env()}.exs"
 # can use eai as a drop-in OpenAI replacement.
 config :eai, :api,
   enabled: true,
-  port: 4000,
+  port: 4001,
   host: "0.0.0.0"
 
 # ── MCP Servers ──────────────────────────────────────────────────────────────

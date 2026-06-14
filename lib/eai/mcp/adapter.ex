@@ -7,6 +7,8 @@ defmodule Eai.MCP.Adapter do
   """
 
   alias Anubis.MCP.Response
+  alias Eai.ResultCollector
+  alias Eai.Tool.Helpers
 
   @doc """
   Build a runtime module for one MCP tool.
@@ -45,7 +47,7 @@ defmodule Eai.MCP.Adapter do
 
         @impl true
         def execute(args, pty_session_id, chat_session_id) do
-          Eai.MCP.Adapter.do_execute(
+          unquote(__MODULE__).do_execute(
             unquote(server_id),
             unquote(tool_name),
             args,
@@ -72,7 +74,7 @@ defmodule Eai.MCP.Adapter do
     # calls can't fire faster than the LLM-side poller. Pinned here (not in
     # ExPTY on_data) because the terminal stream itself is fine — only the
     # MCP-driven pull loop was racing.
-    cooldown = Eai.Tool.Helpers.poll_cooldown_ms()
+    cooldown = Helpers.poll_cooldown_ms()
     if is_integer(cooldown) and cooldown > 0, do: Process.sleep(cooldown)
 
     sanitized = Eai.Utils.sanitize_value(args)
@@ -107,7 +109,7 @@ defmodule Eai.MCP.Adapter do
     # triggered Eai.Task.trigger_timeout_window(pty_session_id), each MCP
     # call here will consume one layer of the depth and append a reminder
     # so the LLM-side loop can wrap up.
-    timeout_nudge = if pty_session_id, do: Eai.ResultCollector.check_timeout_window(pty_session_id)
+    timeout_nudge = if pty_session_id, do: ResultCollector.check_timeout_window(pty_session_id)
     timeout_nudge && (result <> "\n\n" <> timeout_nudge) || result
   end
 
