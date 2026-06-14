@@ -17,6 +17,12 @@ defmodule Eai.Hub.Pipeline do
   Post-hooks accumulate a result value through the chain. `reduce_while` lets
   a block verdict break early without processing remaining hooks, which matters
   for security-gating hooks that want to suppress a result entirely.
+
+  ## LLM hooks
+
+  `llm_pre_hooks/4` and `llm_post_hooks/5` follow the same pattern as tool hooks
+  but operate on LLM HTTP request boundaries rather than individual tool calls.
+  The `tool_name` is always `"LLM_REQUEST"`.
   """
 
   require Logger
@@ -42,7 +48,7 @@ defmodule Eai.Hub.Pipeline do
   @spec hooks() :: [{module(), non_neg_integer()}]
   def hooks, do: :persistent_term.get(@hooks_key, [])
 
-  # ── Pre-hooks ─────────────────────────────────────────────────────────
+  # ── Tool: Pre-hooks ──────────────────────────────────────────────────
 
   @doc """
   Run all pre-hooks for (mod, fun, args).
@@ -53,9 +59,9 @@ defmodule Eai.Hub.Pipeline do
   - `{:modify, new_args}` — hooks modified args; caller should use new_args
 
   Why not pass args through as accumulator here?
-  Pre-hooks can modify args, but we pass the *latest* args into each
+  Pre-hooks can modify args, and we pass the *latest* args into each
   subsequent hook so they see the already-modified version. We still
-  short-circuit on block (reduce_while).
+  short-circuit on block (`reduce_while`).
   """
   @spec pre_hooks(module(), atom(), [any()]) ::
           :ok | {:block, String.t()} | {:modify, [any()]}
@@ -72,7 +78,7 @@ defmodule Eai.Hub.Pipeline do
     end
   end
 
-  # ── Post-hooks ────────────────────────────────────────────────────────
+  # ── Tool: Post-hooks ─────────────────────────────────────────────────
 
   @doc """
   Run all post-hooks for (mod, fun, args, result).
@@ -96,7 +102,72 @@ defmodule Eai.Hub.Pipeline do
     |> Enum.reduce_while({:ok, result}, &reduce_post_hook(&1, &2, tool_name, payload))
   end
 
-  # ── Reduce helpers (extracted to reduce nesting depth) ─────────────
+  # ── LLM: Pre-hooks ───────────────────────────────────────────────────
+
+  @doc """
+  Run all pre-hooks before an LLM HTTP request.
+
+  The `tool_name` is `"LLM_REQUEST"`. Payload carries the full request context.
+
+  Returns:
+  - `:ok` — proceed with original context
+  - `{:block, reason}` — hook vetoed; caller should abort the LLM call
+  - `{:modify, ctx}` — hook modified the context (messages, session, opts, etc.)
+  """
+  @spec llm_pre_hooks([any()], String.t(), String.t(), map()) ::
+          :ok | {:block, String.t()} | {:modify, map()}
+  def llm_pre_hooks(messages, pty_session_id, chat_session_id, opts) do
+    tool_name = "LLM_REQUEST"
+    payload = %{
+      messages: messages,
+      pty_session_id: pty_session_id,
+      chat_session_id: chat_session_id,
+      opts: opts
+    }
+
+    hooks()
+    |> Enum.reduce_while(payload, &reduce_llm_pre_hook(&1, &2, tool_name))
+    |> case do
+      {:block, reason} ->
+        {:block, reason}
+      %{messages: ^messages, pty_session_id: ^pty_session_id,
+        chat_session_id: ^chat_session_id, opts: ^opts} ->
+        :ok
+      ctx when is_map(ctx) ->
+        {:modify, ctx}
+      other ->
+        other
+    end
+  end
+
+  # ── LLM: Post-hooks ──────────────────────────────────────────────────
+
+  @doc """
+  Run all post-hooks after an LLM HTTP response.
+
+  The result is the raw return triple from the LLM call:
+  `{:ok, reply, history}` or `{:error, reason, partial_history}`.
+
+  Returns:
+  - `{:ok, final_result}` — pipeline completed; result may have been modified
+  - `{:block, reason}` — a hook vetoed the result (caller discards)
+  """
+  @spec llm_post_hooks([any()], String.t(), String.t(), map(), any()) ::
+          {:ok, any()} | {:block, String.t()}
+  def llm_post_hooks(messages, pty_session_id, chat_session_id, opts, result) do
+    tool_name = "LLM_REQUEST"
+    payload = %{
+      messages: messages,
+      pty_session_id: pty_session_id,
+      chat_session_id: chat_session_id,
+      opts: opts
+    }
+
+    hooks()
+    |> Enum.reduce_while({:ok, result}, &reduce_llm_post_hook(&1, &2, tool_name, payload))
+  end
+
+  # ── Reduce helpers (extracted to reduce nesting depth) ────────────────
 
   defp reduce_pre_hook({hook_mod, _prio}, {status, current_args}, tool_name, payload) do
     current_payload = %{payload | args: current_args}
@@ -126,11 +197,34 @@ defmodule Eai.Hub.Pipeline do
     end
   end
 
+  defp reduce_llm_pre_hook({hook_mod, _prio}, ctx, tool_name) do
+    if safe_interest(hook_mod, :llm_pre, tool_name, ctx) do
+      case safe_verdict_llm_pre(hook_mod, :llm_pre, tool_name, ctx) do
+        :ok -> {:cont, ctx}
+        {:modify, new_ctx} when is_map(new_ctx) -> {:cont, new_ctx}
+        {:block, reason} -> {:halt, {:block, reason}}
+        _ -> {:cont, ctx}
+      end
+    else
+      {:cont, ctx}
+    end
+  end
+
+  defp reduce_llm_post_hook({hook_mod, _prio}, {:ok, current_result}, tool_name, payload) do
+    if safe_interest(hook_mod, :llm_post, tool_name, payload) do
+      case safe_verdict_llm_post(hook_mod, :llm_post, tool_name, payload, current_result) do
+        :ok -> {:cont, {:ok, current_result}}
+        {:modify, new_result} -> {:cont, {:ok, new_result}}
+        {:block, reason} -> {:halt, {:block, reason}}
+        _ -> {:cont, {:ok, current_result}}
+      end
+    else
+      {:cont, {:ok, current_result}}
+    end
+  end
+
   # ── Safe wrappers (fail open + telemetry) ────────────────────────────
 
-  # Why wrap in try/rescue?
-  # A buggy hook must never crash the tool call. We fire telemetry so the
-  # error is observable (metrics, log handler) without being fatal.
   defp safe_interest(hook_mod, event, tool_name, payload) do
     hook_mod.interest(event, tool_name, payload)
   rescue
@@ -164,6 +258,30 @@ defmodule Eai.Hub.Pipeline do
   catch
     kind, reason ->
       emit_hook_error(hook_mod, :verdict_post, {kind, reason})
+      :ok
+  end
+
+  defp safe_verdict_llm_pre(hook_mod, event, tool_name, payload) do
+    hook_mod.verdict(event, tool_name, payload)
+  rescue
+    e ->
+      emit_hook_error(hook_mod, :verdict_llm_pre, e)
+      :ok
+  catch
+    kind, reason ->
+      emit_hook_error(hook_mod, :verdict_llm_pre, {kind, reason})
+      :ok
+  end
+
+  defp safe_verdict_llm_post(hook_mod, event, tool_name, payload, result) do
+    hook_mod.verdict(event, tool_name, payload, result)
+  rescue
+    e ->
+      emit_hook_error(hook_mod, :verdict_llm_post, e)
+      :ok
+  catch
+    kind, reason ->
+      emit_hook_error(hook_mod, :verdict_llm_post, {kind, reason})
       :ok
   end
 

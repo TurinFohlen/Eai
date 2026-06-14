@@ -4,10 +4,15 @@ defmodule Eai.LLM.Direct do
 
   All internal history is [Eai.Message.t()]. Before sending to an LLM provider,
   the appropriate adapter converts messages to provider-specific wire format.
-  Responses are parsed back into Eai.Message.t().
+  Responses are parsed back into Eai.Message.t(). LLM requests
+  flow through `Pipeline.llm_pre_hooks/4` and `llm_post_hooks/5`
+  for pre/post request interception.
   """
+
+  require Logger
   @tools_dir Path.expand("config/tools", File.cwd!())
 
+  alias Eai.Hub.Pipeline
   alias Eai.Message
 
   # ── Tool registry (lazy-loaded on first run) ─────────────────────────
@@ -106,21 +111,21 @@ defmodule Eai.LLM.Direct do
 
     {messages, prompt, schemas, opts} = prepare_run_context(messages, prompt, opts)
 
-    adapter_opts = [reasoning_effort: effort]
-    req = adapter.to_request_body(messages, model, prompt, schemas, adapter_opts)
-    req_url = if is_nil(req.url), do: url, else: req.url
-    headers = build_headers(provider, api_key, req.headers)
+    # ── LLM pre-hooks ──────────────────────────────────────────────
+    case Pipeline.llm_pre_hooks(messages, pty_session_id, chat_session_id, opts) do
+      {:block, reason} ->
+        Logger.warning("LLM request blocked by hook: #{reason}")
+        {:error, "LLM request blocked by hook: #{reason}", messages}
 
-    execute_request(
-      req_url,
-      req.json_body,
-      headers,
-      timeout,
-      messages,
-      pty_session_id,
-      chat_session_id,
-      opts
-    )
+      {:modify, %{messages: messages, pty_session_id: pty_session_id,
+                  chat_session_id: chat_session_id, opts: opts}} ->
+        do_run(messages, pty_session_id, chat_session_id, opts, adapter, model, prompt,
+               schemas, provider, api_key, url, timeout, effort)
+
+      :ok ->
+        do_run(messages, pty_session_id, chat_session_id, opts, adapter, model, prompt,
+               schemas, provider, api_key, url, timeout, effort)
+    end
   end
 
   # ── Run context preparation (extracted to reduce CC) ────────────────
@@ -155,6 +160,27 @@ defmodule Eai.LLM.Direct do
       end
 
     {messages, prompt, schemas, opts}
+  end
+
+    # ── Execute LLM request (extracted for hook rebind) ────────────
+
+  defp do_run(messages, pty_session_id, chat_session_id, opts, adapter, model, prompt,
+              schemas, provider, api_key, url, timeout, effort) do
+    adapter_opts = [reasoning_effort: effort]
+    req = adapter.to_request_body(messages, model, prompt, schemas, adapter_opts)
+    req_url = if is_nil(req.url), do: url, else: req.url
+    headers = build_headers(provider, api_key, req.headers)
+
+    execute_request(
+      req_url,
+      req.json_body,
+      headers,
+      timeout,
+      messages,
+      pty_session_id,
+      chat_session_id,
+      opts
+    )
   end
 
   defp execute_request(
@@ -197,42 +223,49 @@ defmodule Eai.LLM.Direct do
          adapter,
          opts
        ) do
-    case result do
-      {:ok, %{status: 200, body: resp_body}} ->
-        :telemetry.execute([:eai, :llm, :request, :stop], %{duration_ms: duration}, %{
-          pty_session_id: pty_session_id,
-          status: :ok
-        })
+    raw_result =
+      case result do
+        {:ok, %{status: 200, body: resp_body}} ->
+          :telemetry.execute([:eai, :llm, :request, :stop], %{duration_ms: duration}, %{
+            pty_session_id: pty_session_id,
+            status: :ok
+          })
 
-        assistant_msg = adapter.from_response(resp_body)
-        handle_response(assistant_msg, messages, pty_session_id, chat_session_id, opts)
+          assistant_msg = adapter.from_response(resp_body)
+          handle_response(assistant_msg, messages, pty_session_id, chat_session_id, opts)
 
-      {:ok, %{status: status, body: body}} ->
-        :telemetry.execute([:eai, :llm, :request, :stop], %{duration_ms: duration}, %{
-          pty_session_id: pty_session_id,
-          status: :error
-        })
+        {:ok, %{status: status, body: body}} ->
+          :telemetry.execute([:eai, :llm, :request, :stop], %{duration_ms: duration}, %{
+            pty_session_id: pty_session_id,
+            status: :error
+          })
 
-        :telemetry.execute([:eai, :llm, :request, :error], %{duration_ms: duration}, %{
-          pty_session_id: pty_session_id,
-          reason: "HTTP #{status}",
-          body: inspect(body)
-        })
+          :telemetry.execute([:eai, :llm, :request, :error], %{duration_ms: duration}, %{
+            pty_session_id: pty_session_id,
+            reason: "HTTP #{status}",
+            body: inspect(body)
+          })
 
-        {:error, "HTTP #{status}: #{inspect(body)}", messages}
+          {:error, "HTTP #{status}: #{inspect(body)}", messages}
 
-      {:error, reason} ->
-        :telemetry.execute([:eai, :llm, :request, :stop], %{duration_ms: duration}, %{
-          pty_session_id: pty_session_id,
-          status: :error
-        })
+        {:error, reason} ->
+          :telemetry.execute([:eai, :llm, :request, :stop], %{duration_ms: duration}, %{
+            pty_session_id: pty_session_id,
+            status: :error
+          })
 
-        :telemetry.execute([:eai, :llm, :request, :error], %{duration_ms: duration}, %{
-          pty_session_id: pty_session_id,
-          reason: inspect(reason)
-        })
+          :telemetry.execute([:eai, :llm, :request, :error], %{duration_ms: duration}, %{
+            pty_session_id: pty_session_id,
+            reason: inspect(reason)
+          })
 
-        {:error, reason, messages}
+          {:error, reason, messages}
+      end
+
+    # ── LLM post-hooks ─────────────────────────────────────────────
+    case Pipeline.llm_post_hooks(messages, pty_session_id, chat_session_id, opts, raw_result) do
+      {:ok, final} -> final
+      {:block, _reason} -> raw_result
     end
   end
 
