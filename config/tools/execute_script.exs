@@ -88,13 +88,13 @@ defmodule Eai.Tool.ExecuteScript do
     Process.sleep(cooldown)
 
     # Check interrupt flag
-    if Eai.Task.check_and_clear_interrupt_flag(pty_session_id) do
+    if Eai.ResultCollector.check_and_clear_interrupt_flag(pty_session_id) do
       Eai.Naming.pool().interrupt_task(pty_session_id)
       %{status: "interrupted", task_id: task_id}
       |> Eai.Utils.sanitize_value()
       |> Jason.encode!()
     else
-      case Eai.Task.get(task_id) do
+      case Eai.ResultCollector.get(task_id) do
         %{status: "complete", output: output} ->
           %{status: "complete", output: output, task_id: task_id}
           |> Eai.Utils.sanitize_value()
@@ -106,7 +106,7 @@ defmodule Eai.Tool.ExecuteScript do
 
         _ when max_loops <= 0 ->
           Logger.warning("SBC timeout for #{task_id}, force-completing")
-          {:ok, output} = Eai.Task.force_complete(task_id)
+          {:ok, output} = Eai.ResultCollector.force_complete(task_id)
           Eai.Naming.pool().clear_task(pty_session_id, task_id)
           %{status: "timeout", output: output, task_id: task_id}
           |> Eai.Utils.sanitize_value()

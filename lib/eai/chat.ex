@@ -7,7 +7,7 @@ defmodule Eai.Chat do
   alias Eai.Adapter.OpenAI, as: AdapterOpenAI
   alias Eai.LLM.Direct
   alias Eai.Message
-  alias Eai.Task, as: TaskResult
+  alias Eai.ResultCollector, as: TaskResult
   alias Eai.Utils
 
   # ── 客户端 API ───────────────────────────────────────────────────
@@ -244,7 +244,7 @@ defmodule Eai.Chat do
         {:talk_async, message, timeout, model_opt, prompt_opt, chara_card_opt, chat_session, pty_session}
       )
 
-      IO.puts(~s|Task submitted. Use Eai.Chat.interrupt!("#{chat_session}") to cancel its current task, or Eai.Task.trigger_timeout_window("#{pty_session}") to stop the loop and nudge the model to wrap up.|)
+      IO.puts(~s|Task submitted. Use Eai.Chat.interrupt!("#{chat_session}") to cancel its current task, or Eai.ResultCollector.trigger_timeout_window("#{pty_session}") to stop the loop and nudge the model to wrap up.|)
     end
   end
 

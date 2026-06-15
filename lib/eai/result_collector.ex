@@ -163,6 +163,11 @@ defmodule Eai.ResultCollector do
   def trigger_timeout_window(pty_session_id, depth \\ 1) do
     Cache.put(window_key(pty_session_id), depth)
     Logger.info("Timeout window triggered for #{pty_session_id}, depth: #{depth} (cache)")
+    :telemetry.execute(
+      [:eai, :result_collector, :timeout, :triggered],
+      %{system_time: System.system_time()},
+      %{pty_session_id: pty_session_id, depth: depth}
+    )
   end
 
   @doc """

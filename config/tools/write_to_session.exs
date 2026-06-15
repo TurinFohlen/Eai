@@ -5,19 +5,54 @@ defmodule Eai.Tool.WriteToSession do
 
   @description """
   Write raw bytes directly to a PTY session's stdin, bypassing the sentinel wrapper.
-  Use for interactive input (e.g. answering [Y/n] prompts) or for sending control characters.
+  Use for interactive input (e.g. answering [Y/n] prompts, navigating pagers/editors).
   Do NOT use for normal script execution — use execute_script for that.
 
   Supported escape sequences (write them literally in the input string):
-    \\\\n   newline
-    \\\\r   carriage return
-    \\\\t   tab
-    \\\\x03 Ctrl+C (interrupt running task)
-    \\\\x04 Ctrl+D (EOF)
-    \\\\x1a Ctrl+Z
 
-  **Example:** to interrupt a running task, send Ctrl+C then echo the right sentinel:
+    \\\\n      newline
+    \\\\r      carriage return
+    \\\\t      tab
+    \\\\e      ESC (ANSI escape prefix, e.g. \\\\e[A for up arrow)
+    \\\\x1b    ESC (hex form, same as \\\\e)
+
+  Arrow keys (send after ESC):
+    \\\\e[A    up
+    \\\\e[B    down
+    \\\\e[C    right
+    \\\\e[D    left
+
+  Extended keys:
+    \\\\e[1~   Home
+    \\\\e[4~   End
+    \\\\e[5~   PgUp
+    \\\\e[6~   PgDn
+    \\\\e[2~   Insert
+    \\\\e[3~   Delete
+
+  Control characters:
+    \\\\x03    Ctrl+C (interrupt running task)
+    \\\\x04    Ctrl+D (EOF)
+    \\\\x1a    Ctrl+Z (suspend)
+    \\\\x07    Ctrl+G (bell)
+    \\\\x08    Ctrl+H (backspace)
+    \\\\x7f    DEL (delete)
+
+  Common key combos:
+    q          quit less/more/man
+    Space      page down in pager
+    :q!\\n      quit vim
+    i          enter insert mode (vim)
+    Esc        exit insert mode (vim)
+
+  **Example:** interrupt a stuck task:
     input: "\\\\x03\\\\necho #{@right_sentinel}\\\\n"
+
+  **Example:** navigate less pager down 2 lines then quit:
+    input: "\\\\e[B\\\\e[Bq"
+
+  **Example:** quit vim:
+    input: "\\\\x1b:q!\\\\n"
   """
 
   @impl true
@@ -33,7 +68,7 @@ defmodule Eai.Tool.WriteToSession do
             input: %{
               type: "string",
               description:
-                "String to write, using escape sequences for control chars (e.g. \"y\\\\n\", \"\\\\x03\\\\n\")."
+                "String to write. Supports escape sequences: \\\\n \\\\r \\\\t \\\\e \\\\x1b \\\\x03(Ctrl+C) \\\\x04(Ctrl+D) \\\\x1a(Ctrl+Z). Arrow keys: \\\\e[A(B,C,D). Extended: \\\\e[1~(Home) \\\\e[4~(End) \\\\e[5~(PgUp) \\\\e[6~(PgDn)."
             },
             pty_session_id: %{type: "string", description: "PTY session ID (default: 'default')."}
           },
@@ -64,11 +99,32 @@ defmodule Eai.Tool.WriteToSession do
 
   defp unescape(input) do
     input
+    # ANSI / extended keys (process before single chars to avoid partial matches)
+    |> String.replace("\\e[1~", "\e[1~")    # Home
+    |> String.replace("\\e[2~", "\e[2~")    # Insert
+    |> String.replace("\\e[3~", "\e[3~")    # Delete
+    |> String.replace("\\e[4~", "\e[4~")    # End
+    |> String.replace("\\e[5~", "\e[5~")    # PgUp
+    |> String.replace("\\e[6~", "\e[6~")    # PgDn
+    |> String.replace("\\e[A", "\e[A")      # Up
+    |> String.replace("\\e[B", "\e[B")      # Down
+    |> String.replace("\\e[C", "\e[C")      # Right
+    |> String.replace("\\e[D", "\e[D")      # Left
+    |> String.replace("\\e[H", "\e[H")      # Home (alt form)
+    |> String.replace("\\e[F", "\e[F")      # End (alt form)
+    # ESC variants
+    |> String.replace("\\x1b", "\x1b")
+    |> String.replace("\\e", "\e")
+    # Control characters
+    |> String.replace("\\x03", <<3>>)
+    |> String.replace("\\x04", <<4>>)
+    |> String.replace("\\x07", <<7>>)
+    |> String.replace("\\x08", <<8>>)
+    |> String.replace("\\x1a", <<26>>)
+    |> String.replace("\\x7f", <<127>>)
+    # Common whitespace (process last to avoid interfering with above)
     |> String.replace("\\n", "\n")
     |> String.replace("\\r", "\r")
     |> String.replace("\\t", "\t")
-    |> String.replace("\\x03", <<3>>)
-    |> String.replace("\\x04", <<4>>)
-    |> String.replace("\\x1a", <<26>>)
   end
 end

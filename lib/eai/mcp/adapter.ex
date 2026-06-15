@@ -106,7 +106,7 @@ defmodule Eai.MCP.Adapter do
     )
 
     # Mirror the timeout-window check used by get_task_result. If the user
-    # triggered Eai.Task.trigger_timeout_window(pty_session_id), each MCP
+    # triggered Eai.ResultCollector.trigger_timeout_window(pty_session_id), each MCP
     # call here will consume one layer of the depth and append a reminder
     # so the LLM-side loop can wrap up.
     timeout_nudge = if pty_session_id, do: ResultCollector.check_timeout_window(pty_session_id)

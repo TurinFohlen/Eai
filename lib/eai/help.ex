@@ -22,11 +22,11 @@ defmodule Eai do
 
     ## 让模型"主动停手"（中断 loop）
     当模型陷入多余的工具循环（反复轮询、栈大量小命令）时，可用 timeout 窗口：
-    Eai.Task.trigger_timeout_window("pty_session_id", 1)
+    Eai.ResultCollector.trigger_timeout_window("pty_session_id", 1)
       → 下一轮 LLM 请求会看到一条 user 提示：“The timeout you set has been reached.
         Please safely stop what you're doing and reply now.”
       → depth 是连续提示的轮数（1 = 提示一次；2 = 连续两轮都提示）。
-    Eai.Task.check_timeout_window("pty_session_id")  → 内部使用，一般无需手动调
+    Eai.ResultCollector.check_timeout_window("pty_session_id")  → 内部使用，一般无需手动调
     Eai.Chat.close_chat_session("session")    → 关闭会话
     Eai.Chat.export_history("path.gz")        → {:ok, path} | {:error, reason}
     Eai.Chat.export_history("path.gz", "session")

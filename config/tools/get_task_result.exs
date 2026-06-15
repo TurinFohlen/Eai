@@ -49,20 +49,20 @@ defmodule Eai.Tool.GetTaskResult do
         Jason.encode!(%{error: "missing task_id"})
 
       task_id ->
-        if Eai.Task.check_and_clear_interrupt_flag(pty_session_id) do
+        if Eai.ResultCollector.check_and_clear_interrupt_flag(pty_session_id) do
           Eai.Naming.pool().interrupt_task(pty_session_id)
 
           %{status: "complete", output: "Task forcefully interrupted by user. Please reply now."}
           |> Eai.Utils.sanitize_value()
           |> Jason.encode!()
         else
-          case Eai.Task.check_timeout_window(pty_session_id) do
+          case Eai.ResultCollector.check_timeout_window(pty_session_id) do
             msg when is_binary(msg) ->
               %{status: "complete", output: msg} |> Eai.Utils.sanitize_value() |> Jason.encode!()
 
             _ ->
               result =
-                case Eai.Task.get(task_id) do
+                case Eai.ResultCollector.get(task_id) do
                   %{status: "complete", output: output} ->
                     %{status: "complete", output: output}
 
