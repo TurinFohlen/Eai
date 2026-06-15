@@ -1,6 +1,6 @@
 # Eai - Bootstrap Guide
 
-> Version 0.1.13 • Extreme minimal AI assistant with persistent PTY, recursive sub-agents, and MCP server support
+> Version 0.1.13 • Extreme minimal AI assistant with persistent PTY and recursive sub-agents. MCP servers are accessed via external CLI tools (mcporter, agent-browser), not baked into the framework.
 
 ---
 
@@ -25,10 +25,6 @@ eai/
 │   ├── config.exs              # Sandbox, polling, sentinel, telemetry defaults
 │   ├── models.exs              # LLM model registry (deepseek, gpt4o, claude_opus, …)
 │   ├── prompts.exs             # System prompt registry (momoka, coder, analyst)
-│   ├── cache.exs               # Cache backend (Nebulex local adapter)
-│   ├── mcp_servers/            # MCP server configs - one file per server, hot-reloadable
-│   │   ├── npx.exs             #   Filesystem server via npx (zero-auth, first-run sanity check)
-│   │   └── gdrive.exs          #   Google Drive via @isaacphi/mcp-gdrive (requires OAuth)
 │   ├── tools/                  # 14 self-contained tool files (.exs) - plugin architecture
 │   ├── prompts/                # Individual prompt files per persona
 │   ├── hooks/                  # Hook .exs files (numeric prefix = load order)
@@ -92,7 +88,7 @@ All conversation history is stored as `[Eai.Message.t()]` - a list of maps with 
   {:thinking, "Let me think..."},
   {:tool_use, [tool_use_id: "abc", name: "execute_script", input: %{"script" => "ls"}]}
 ]}
-%{role: :user, content: [{:tool_result, [tool_use_id: "abc", content: [{:text, "..."}]]}]}
+%{role: :user, content: [{:tool_result, [tool_use_id: "abc", content: [{:text, "..."}]}]}
 ```
 
 **Why:** Provider-agnostic. Adapters (`OpenAI`, `Anthropic`, `Converse`) convert to/from wire format. Multimodal injection (`:image` blocks) flows through the same pipeline.
@@ -103,12 +99,12 @@ All conversation history is stored as `[Eai.Message.t()]` - a list of maps with 
 IR [Eai.Message.t()]
     │
     ▼
-┌─────────────────────────────────────────────┐
-│ Eai.Adapter (behaviour)                      │
+┌──────────────────────────────────────┐
+│ Eai.Adapter (behaviour)              │
 │   ├── Anthropic  → IR ↔ Anthropic Messages   │
 │   ├── OpenAI     → IR ↔ Chat Completions     │
 │   └── Converse   → IR ↔ Bedrock Converse     │
-└─────────────────────────────────────────────┘
+└──────────────────────────────────────┘
     │
     ▼
 Provider HTTP API
@@ -136,7 +132,9 @@ config/tools/
 ├── list_chat_sessions.exs    # List chat sessions (message count, status)
 ├── close_chat_session.exs    # Close and free a chat session
 ├── get_local_time.exs        # UTC timestamp
-└── set_config.exs            # Tune poll_cooldown_ms, PTY timing
+├── set_config.exs            # Tune poll_cooldown_ms, PTY timing
+├── hub_reload.exs            # Hot-reload hooks
+└── list_chara_cards.exs      # List available character cards
 ```
 
 Every tool implements `Eai.Tool` behaviour (`schema/0` + `execute/4`). Tools are lazy-loaded on first `Direct.run/3` call and cached in `:persistent_term`. The tool dispatch map is built automatically - no registration needed.
@@ -155,48 +153,57 @@ Both `execute_script` and `call_subagent` support SBC via `sbc: true` flag. SBC 
 1. **Spawn:** `Eai.Sandbox.PTYPool` creates a bash PTY per `pty_session_id` in `work_dir_root/<session>/`
 2. **Execute:** Tool writes a temp script, runs `bash <script>`, captures output between sentinels
 3. **Collect:** `Eai.ResultCollector.collect/2` buffers PTY output, strips ANSI escape codes, extracts between `___EAI_START___` / `___EAI_END___`
-4. **Reset:** `reset_session` kills the PTY process, which auto-spawns on next command
-5. **Interrupt:** Ctrl-C injected via `write_to_session("\x03")`
+4. **Interrupt:** `write_to_session` injects `\x03` (Ctrl+C) to kill running commands
+5. **Reset:** `reset_session` force-kills and recreates the PTY
 
-### 3.6 Poll Dedup (Cost Optimization)
+### 3.6 Sub-Agent Economics
 
-LLM conversation history grows rapidly during tool-calling loops. `Eai.LLM.Direct` strips stale "running" polls - only the **latest** `get_task_result` / `get_subagent_result` pair (assistant tool_use + user tool_result with `status: "running"`) survives. Older "running" pairs are pruned before the next LLM call.
+`call_subagent` creates a **fresh agent context** with only system prompt + task message. This is ~50× cheaper per round-trip than running the same task in the main context. Supports session reuse (`chat_session`) and prefix caching (`pre_context`) for repeated operations.
 
-### 3.7 Two-Layer Grid Memory
+### 3.7 Hook Framework
 
-| File | Scope | Purpose |
-|------|-------|---------|
-| `TRANSITION.md` | **Main branch**, global | Core axioms: framework modules, CLI tools, user profile, universal predicates |
-| `PROJECT_TRANSITION.md` | **Feature branch**, local | Temporary middleware, feature flags, branch-specific states |
+Every tool call and LLM HTTP request flows through a central dispatch (`Eai.Hub.run/3`):
+`config/hooks/*.exs` → Code.compile_file → Pipeline.register/1 → :persistent_term → Pipeline.pre_hooks / post_hooks
 
-Triples use free-form syntax: `<<{subject, predicate, object}.` - one per line.
+| Event | Scope | When |
+|-------|-------|------|
+| `:pre` / `:post` | Tool | Before/after tool execution |
+| `:llm_pre` / `:llm_post` | LLM | Before/after each HTTP request |
 
-Query via:
+**Built-in hooks:**
+
+| File | Priority | Purpose |
+|------|----------|---------|
+| `01_example.exs` | 10 | Blocks dangerous shell patterns |
+| `02_session_log.exs` | 20 | Fires telemetry for every tool/LLM event |
+| `03_auto_snapshot.exs` | 5 | Two-tier ETS snapshot + automatic rollback on LLM errors |
+| `04_fix_empty_thinking.exs` | 25 | Fills empty assistant text with thinking content when LLM returns reasoning but no output |
+
+**Management:**
+
 ```bash
-python priv/scripts/dispatch.py TRANSITION.md path A B     # shortest logical path
-python priv/scripts/dispatch.py TRANSITION.md query A B 5   # next valid hops
-python priv/scripts/dispatch.py TRANSITION.md deps X        # what X depends on
-python priv/scripts/dispatch.py TRANSITION.md matrix        # visualise graph
+Eai.Hub.reload!()              # Hot-reload all hooks
+Eai.Hub.Loader.print_hooks()   # List current hooks with priorities
+:persistent_term.erase(:eai_hooks); Eai.Hub.reload!()  # Force full reload
 ```
 
-### 3.8 HTTP API Endpoint (OpenAI-compatible)
+### 3.8 HTTP API (OpenAI-compatible)
 
-Eai exposes an OpenAI-compatible REST API via Bandit. External tools - chatgpt-on-wechat, n8n, custom bots, or anything that speaks the OpenAI API - can use eai as a drop-in replacement.
+Eai exposes an OpenAI-compatible REST API on port 4000 (configurable). This enables any OpenAI-compatible client to talk to Eai's LLM backends.
+
+Quick start:
 
 ```bash
-# Chat completion
-curl -X POST http://localhost:4000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model":"deepseek","messages":[{"role":"user","content":"hello"}]}'
-
 # List models
 curl http://localhost:4000/v1/models
 
-# List MCP tools
-curl http://localhost:4000/v1/tools
+# Chat completion
+curl http://localhost:4000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"deepseek","messages":[{"role":"user","content":"hello"}]}'
 
-# MCP server status
-curl http://localhost:4000/v1/mcp/status
+# List tools
+curl http://localhost:4000/v1/tools
 
 # Health check
 curl http://localhost:4000/health
@@ -213,143 +220,50 @@ config :eai, :api,
 
 **Connecting chatgpt-on-wechat:** set `openai_api_base` to `http://<eai-host>:4000/v1` in CoW's config. Done - WeChat/飞书/钉钉 all go through this one endpoint.
 
-### 3.9 MCP Server Integration (Model Context Protocol)
+### 3.9 External Tooling (Unix Philosophy)
 
-Eai connects to external MCP servers via [Anubis](https://hexdocs.pm/anubis_mcp/) (v1.6+). Each server is configured in its own file under `config/mcp_servers/`:
+Rather than baking external integrations into the Elixir framework (which bloats system prompts and breaks prefix caching), Eai uses **external CLI tools** called via `execute_script`. The model interacts with them like any other bash command — no schema pollution, no context overhead.
 
-```elixir
-# config/mcp_servers/npx.exs
-config :eai, :mcp_servers, [
-  {:filesystem,
-   [
-     transport: {:stdio, command: "npx", args: ~w(-y @modelcontextprotocol/server-filesystem /tmp)},
-     client_info: %{"name" => "Eai", "version" => "0.1.13"}
-   ]}
-]
-```
+#### McPorter — MCP client CLI
 
-**Transport format** - Anubis uses **2-tuples**, not keyword lists:
-
-```elixir
-# STDIO (local process)
-{:stdio, command: "npx", args: [...], env: %{"KEY" => "val"}}
-
-# Streamable HTTP (remote)
-{:streamable_http, url: "http://localhost:8000/mcp"}
-
-# SSE (deprecated, use streamable_http instead)
-{:sse, base_url: "http://localhost:8000"}
-```
-
-**Hot-reload** - edit config files, then call:
-
-```elixir
-Eai.MCP.reload!()
-# → {:ok, %{added: 1, removed: 0, unchanged: 1, total: 2}}
-# Stops removed servers, starts new ones, refreshes tool registry. No VM restart.
-```
-
-**Status** - check all servers at a glance:
-
-```elixir
-Eai.MCP.status()
-# → [%{id: :filesystem, status: :online, tools: 5, transport: :stdio},
-#    %{id: :gdrive,    status: :online, tools: 8, transport: :stdio}]
-```
-
-**Config validation** - both boot and `reload!` validate transport format before
-passing to Anubis. Wrong format gets a clear error, not a cryptic pattern match crash:
-
-```
-MCP: skipping :broken - streamable_http transport requires :url option
-MCP: skipping :oops - invalid transport format: [layer: ...]
-  Expected 2-tuple: {:stdio, command: ...} | {:streamable_http, url: ...}
-```
-
-**Adding a new server:** create `config/mcp_servers/<name>.exs`, write the config, call `Eai.MCP.reload!()`.
-
-### 3.9 Hook Framework
-
-Every tool call and LLM HTTP request flows through a central dispatch (Eai.Hub.run/3):
-config/hooks/*.exs → Code.compile_file → Pipeline.register/1 → :persistent_term → Pipeline.pre_hooks / post_hooks
-
-| Event | Scope | When |
-|-------|-------|------|
-| :pre / :post | Tool | Before/after tool execution |
-| :llm_pre / :llm_post | LLM | Before/after each HTTP request |
-
-Hook file example (config/hooks/10_my_guard.exs):
-  defmodule MyGuard do
-    use Eai.Hook, priority: 10
-    def interest(:pre, tool_name, _payload), do: String.contains?(tool_name, "WriteToSession")
-    def verdict(:pre, _tool, %{args: [cmd | _]}) when is_binary(cmd) do
-      if String.contains?(cmd, "rm -rf /"), do: {:block, "nope"}, else: :ok
-    end
-  end
-
-Built-in hooks:
-  01_example.exs (p=10) — blocks dangerous shell patterns
-  02_session_log.exs (p=20) — fires telemetry for every tool/LLM event
-  03_auto_snapshot.exs (p=5) — two-tier ETS snapshot + rollback on LLM errors
-
-Management:
-  Eai.Hub.reload!()              — hot-reload all hooks
-  Eai.Hub.Loader.print_hooks()   — list current hooks with priorities
-### 3.9 Hook Framework
-
-Every tool call and LLM HTTP request flows through a central dispatch (`Eai.Hub.run/3`):
-
-```
-config/hooks/*.exs → Code.compile_file → Pipeline.register/1 → :persistent_term
-                         ↓
-Eai.Hub.run/3 → Pipeline.pre_hooks / post_hooks (tool)
-Eai.LLM.Direct → Pipeline.llm_pre_hooks / llm_post_hooks (LLM)
-```
-
-| Event | Scope | When |
-|-------|-------|------|
-| `:pre` / `:post` | Tool | Before/after tool execution |
-| `:llm_pre` / `:llm_post` | LLM | Before/after each HTTP request |
-
-**Hook file example** (`config/hooks/10_my_guard.exs`):
-
-```elixir
-defmodule MyGuard do
-  use Eai.Hook, priority: 10
-
-  def interest(:pre, tool_name, _payload),
-    do: String.contains?(tool_name, "WriteToSession")
-  def interest(_event, _tool, _payload), do: false
-
-  def verdict(:pre, _tool, %{args: [cmd | _]}) when is_binary(cmd) do
-    if String.contains?(cmd, "rm -rf /"), do: {:block, "nope"}, else: :ok
-  end
-  def verdict(:pre, _tool, _payload), do: :ok
-  def verdict(:post, _tool, _payload, _result), do: :ok
-  def verdict(:llm_pre, _tool, _payload), do: :ok
-  def verdict(:llm_post, _tool, _payload, _result), do: :ok
-end
-```
-
-**Built-in hooks:**
-
-| File | Priority | Purpose |
-|------|----------|---------|
-| `01_example.exs` | 10 | Blocks dangerous shell patterns |
-| `02_session_log.exs` | 20 | Fires telemetry for every tool/LLM event |
-| `03_auto_snapshot.exs` | 5 | Two-tier ETS snapshot + automatic rollback on LLM errors |
-
-**Management:**
+[McPorter](https://github.com/openclaw/mcporter) (⭐4,652) is the de-facto MCP CLI. Install globally:
 
 ```bash
-Eai.Hub.reload!()              # Hot-reload all hooks
-Eai.Hub.Loader.print_hooks()   # List current hooks with priorities
-:persistent_term.erase(:eai_hooks); Eai.Hub.reload!()  # Force full reload
+npm install -g mcporter
 ```
 
-### 3.10 Sub-Agent Economics
+The model uses it like this:
 
-`call_subagent` creates a **fresh agent context** with only system prompt + task message. This is ~50× cheaper per round-trip than running the same task in the main context. Supports session reuse (`chat_session`) and prefix caching (`pre_context`) for repeated operations.
+```bash
+# Discover tools on an MCP server
+mcporter list filesystem
+
+# Call a tool
+mcporter call filesystem.read_file path:/tmp/hello.txt
+
+# Ad-hoc: connect to any MCP endpoint without config
+mcporter call --stdio "npx -y @modelcontextprotocol/server-filesystem /tmp" --name fs
+
+# Bridge mode: expose daemon-managed servers as one MCP endpoint
+mcporter serve --stdio
+```
+
+McPorter auto-discovers MCP configs from Cursor/Claude/Codex/VS Code, handles OAuth, and supports stdio/HTTP/SSE transports. **Zero framework integration needed.**
+
+#### Agent Browser — headless browser CLI
+
+[Agent Browser](https://agentbrowser.dev) provides compact page snapshots with `@eN` refs (~200-400 tokens instead of raw HTML):
+
+```bash
+agent-browser open https://example.com
+agent-browser snapshot -i     # interactive elements only
+agent-browser click @e3
+agent-browser get text @e1
+```
+
+#### Design Principle
+
+The pattern is the same for any external integration: **CLI → stdout/JSON → model reads → model acts.** No tools registered in Eai, nothing in the system prompt. Pure Unix — one tool, one job, pipes and JSON.
 
 ---
 
@@ -368,9 +282,9 @@ Eai.LLM.Direct
   │  1. Resolves model entry (Eai.Models), prompt text (Eai.Prompts)
   │  2. Loads tool schemas from config/tools/ (lazy, cached in :persistent_term)
   │  3. Builds request via adapter.to_request_body(messages, model, prompt, tools)
-  │  4a. [LLM pre-hooks] Pipeline.llm_pre_hooks — hook modules intercept/block/modify request context
+  │  4a. [LLM pre-hooks] Pipeline.llm_pre_hooks — hook modules intercept/modify request
   │  4b. POSTs to provider URL (Req.post)
-  │  4c. [LLM post-hooks] Pipeline.llm_post_hooks — hook modules observe/rollback/transform response
+  │  4c. [LLM post-hooks] Pipeline.llm_post_hooks — hook modules observe/modify response
   │  5. Parses response via adapter.from_response(resp_body) → Eai.Message
   │
   ├── No tool_use → return {:ok, reply_text, history}
@@ -378,9 +292,7 @@ Eai.LLM.Direct
   └── Has tool_use → Tool Loop:
         │
         ├── [Tool pre-hooks] Eai.Hub.run → Pipeline.pre_hooks — block/modify args
-        ├── [Tool pre-hooks] Eai.Hub.run → Pipeline.pre_hooks — block/modify args
         ├── Dispatch each tool via Eai.Tool behaviour (execute/4)
-        ├── [Tool post-hooks] Pipeline.post_hooks — block/modify results
         ├── [Tool post-hooks] Pipeline.post_hooks — block/modify results
         ├── Tool may call PTYPool.exec_async → PTY runs bash → ResultCollector.collect/2
         ├── Build tool_result user messages
@@ -396,8 +308,6 @@ Eai.LLM.Direct
 |--------|------|---------|
 | `Eai.API` | Module | HTTP API entry point (Bandit) |
 | `Eai.API.Router` | Plug.Router | OpenAI-compatible REST endpoints |
-| `Eai.MCP` | GenServer | MCP server lifecycle, hot-reload, status, config validation, tool discovery |
-| `Eai.MCP.Adapter` | Module | MCP tool → Eai.Tool module builder |
 | `Eai.Chat` | GenServer | Multi‑session chat history, async task dispatch |
 | `Eai.LLM.Direct` | Module | Tool-calling loop, adapter dispatch, poll dedup |
 | `Eai.Hook` | Behaviour | Hook contract (interest + verdict callbacks) |
@@ -440,65 +350,69 @@ config :eai, :sandbox,
   work_dir_root: "/home/eai_agents",               # PTY working dirs
   sentinel_left:  "___EAI_START___",               # output extraction markers
   sentinel_right: "___EAI_END___",
-config/hooks/            — hook .exs files (numeric prefix = load order)
-  pty_cols: 200, pty_rows: 50,
-  pty_init_sleep_ms: 200, pty_ready_sleep_ms: 300,
-  debug_pty_output: false                          # set EAI_DEBUG_PTY=1 to override
+  priv_src: "priv"                                  # priv/ mount source
 ```
 
-config :eai, :api,
-  enabled: true,
-  port: 4002,             # or :auto for random port in 1024–49151
-  host: "0.0.0.0"
+### Environment Variables
 
-### config/models.exs (model entries)
-
-Each model is a keyword list with `:name`, `:model`, `:url`, `:provider` (`:openai_compat` or `:anthropic`), `:api_key_env`, and optional `:vision`, `:reasoning_effort`, `:receive_timeout`.
-
-### config/prompts.exs (system prompts)
-
-Three built-in prompts: `:momoka` (default engineer persona), `:coder` (minimal, no fluff), `:analyst` (structured reasoning). Extensible via `config/prompts/*.exs`.
+```
+DEEPSEEK_API_KEY    — DeepSeek API key
+OPENAI_API_KEY      — OpenAI API key
+ANTHROPIC_API_KEY   — Anthropic API key
+EAI_WORK_DIR        — Override PTY work dir root
+EAI_DEBUG_PTY       — Set to "1" for raw PTY output
+EAI_DEBUG_LLM_REQUEST — Set to "1" to dump LLM request body
+```
 
 ---
 
-## 7. Environment Variables
+## 7. Telemetry Events
 
-| Variable | Purpose |
-|----------|---------|
-| `OPENAI_API_KEY` | OpenAI / OpenAI-compatible providers |
-| `DEEPSEEK_API_KEY` | DeepSeek API key |
-| `ANTHROPIC_API_KEY` | Anthropic (Claude) API key |
-| `EAI_DEBUG_PTY` | Set to `1` to see raw PTY output |
-| `EAI_DEBUG_LLM_REQUEST` | Set to `1` to print full LLM request body |
-| `EAI_WORK_DIR` | Override sandbox root directory |
+All `:telemetry.execute/3` calls land on a single handler: `Eai.TelemetryHandler.handle_event/4`.
+
+| Event | Where | When |
+|-------|-------|------|
+| `[:eai, :session, :spawn]` | `Eai.Sandbox.PTYPool.get_or_create/2` | New PTY session spawned |
+| `[:eai, :session, :reset]` | `Eai.Sandbox.PTYPool` | Force-reset on session |
+| `[:eai, :task, :start]` | `Eai.LLM.Direct` | Task submitted |
+| `[:eai, :task, :chunk]` | `Eai.Sandbox.PTYPool` | PTY chunk received |
+| `[:eai, :task, :complete]` | `Eai.Sandbox.PTYPool` | Task complete |
+| `[:eai, :task, :timeout]` | `Eai.Task` | Task timed out |
+| `[:eai, :llm, :request, :start \| :stop \| :error]` | `Eai.LLM.Direct` | LLM roundtrip |
+| `[:eai, :tool, :execute \| :error]` | `Eai.LLM.Direct` | Tool execution |
+| `[:eai, :hook, :auto_snapshot, :saved \| :rolled_back \| :cleared]` | `Eai.Hook.AutoSnapshot` | Snapshot lifecycle |
+| `[:eai, :adapter, :anthropic, :*]` | `Eai.Adapter.Anthropic` | `to_request_body` / `from_response` / `from_messages` |
+| `[:eai, :adapter, :converse, :*]` | `Eai.Adapter.Converse` | (same three) |
+| `[:eai, :adapter, :openai, :*]` | `Eai.Adapter.OpenAI` | (same three) |
 
 ---
 
-## 8. Dependencies
+## 8. Common Pitfalls & Gotchas
 
-| Dep | Purpose |
-|-----|---------|
-| `req` + `finch` | HTTP client |
-| `jason` | JSON encode/decode |
-| `expty` | PTY spawning & I/O |
-| `nebulex` + `shards` | In-memory cache (task results, flags) |
-| `phoenix_pubsub` | Internal pub/sub (chat updates → Record) |
-| `python3` + scipy, numpy | `dispatch.py` - path graph engine |
-| `Pillow` (Python) | `media_reader.py` - image/video extraction |
+| Issue | Resolution |
+|-------|------------|
+| PTY hangs / unresponsive | `list_pty_sessions()` → `reset_session("id")` |
+| LLM request times out | Increase `:receive_timeout` in model config, or use `timeout:` option |
+| Non-UTF-8 bytes in output | `Eai.Utils.sanitize_value/1` wraps them as `BASE64_DATA:<b64>` |
+| Task too slow / too many polls | Raise `poll_cooldown_ms` via `set_config`, use heartbeat subscription pattern |
+| Sub-agent too expensive | Use `pre_context` for prefix caching, reuse `chat_session` across calls |
+| SBC hangs | Task may take >30s - switch to ACC (`sbc: false`), poll manually |
+| LLM returns thinking but no output | Hook `04_fix_empty_thinking.exs` auto-fills text from thinking content |
+| OpenAI 400 "content or tool_calls must be set" | Caused by empty assistant message; `04_fix_empty_thinking` prevents this |
+| Node/npm OpenSSL errors | `export LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu` for system libcrypto |
 
 ---
 
 ## 9. Quick Start
 
 ```bash
-cd ~/eai
-mix deps.get && mix compile
-pip3 install -r priv/scripts/requirements.txt
+# Clone & setup
+git clone https://github.com/TurinFohlen/eai.git
+cd eai
+mix deps.get
 
 # Set at least one API key
-export OPENAI_API_KEY=sk-...
-# export DEEPSEEK_API_KEY=sk-...
-# export ANTHROPIC_API_KEY=sk-ant-...
+export DEEPSEEK_API_KEY=sk-...
 
 # Launch
 iex -S mix
@@ -527,81 +441,4 @@ Eai.help()
 - **Triples** written directly to `TRANSITION.md` (global) or `PROJECT_TRANSITION.md` (branch)
 - **Tool files** in `config/tools/` - no registration needed; just drop a `.exs` that implements `Eai.Tool`
 - **No database** - all state is in-memory (Cache GenServer) or on-disk (gzip records, git repo)
-
----
-
-## 11. Common Pitfalls & Gotchas
-
-| Issue | Resolution |
-|-------|------------|
-| PTY hangs / unresponsive | `list_pty_sessions()` → `reset_session("id")` |
-| LLM request times out | Increase `:receive_timeout` in model config, or use `timeout:` option |
-| Non-UTF-8 bytes in output | `Eai.Utils.sanitize_value/1` wraps them as `BASE64_DATA:<b64>` |
-| Task too slow / too many polls | Raise `poll_cooldown_ms` via `set_config`, use heartbeat subscription pattern |
-| Sub-agent too expensive | Use `pre_context` for prefix caching, reuse `chat_session` across calls |
-| SBC hangs | Task may take >30s - switch to ACC (`sbc: false`), poll manually |
-
----
-
-## 12. Debug & Telemetry
-
-### 12.1 Telemetry event catalog
-
-All `:telemetry.execute/3` calls land on a single handler: `Eai.TelemetryHandler.handle_event/4`, which logs structured events with `event / label / measurements / metadata` fields. Configure labels in `config/config.exs` under `:telemetry_events`.
-
-| Event | Where | When |
-|-------|-------|------|
-| `[:eai, :session, :spawn]` | `Eai.Sandbox.PTYPool.get_or_create/2` | New PTY session spawned |
-| `[:eai, :session, :reset]` | `Eai.Sandbox.PTYPool` | Force-reset on session |
-| `[:eai, :task, :start]` | `Eai.LLM.Direct` | Task submitted |
-| `[:eai, :task, :chunk]` | `Eai.Sandbox.PTYPool.handle_info({:pty_data, ...})` | PTY chunk received (per `on_data` callback) |
-| `[:eai, :task, :complete]` | `Eai.Sandbox.PTYPool` | Task complete |
-| `[:eai, :task, :timeout]` | `Eai.Task` | Task timed out |
-| `[:eai, :llm, :request, :start \| :stop \| :error]` | `Eai.LLM.Direct` | LLM roundtrip |
-| `[:eai, :tool, :execute \| :error]` | `Eai.LLM.Direct` | Tool execution |
-| `[:eai, :adapter, :anthropic, :*]` | `Eai.Adapter.Anthropic` | `to_request_body` / `from_response` / `from_messages` |
-| `[:eai, :adapter, :converse, :*]` | `Eai.Adapter.Converse` | (same three) |
-| `[:eai, :adapter, :openai, :*]` | `Eai.Adapter.OpenAI` | (same three) |
-| `[:eai, :adapter, :mcp, :do_execute, :start \| :stop \| :error]` | `Eai.MCP.Adapter.do_execute/5` | Per-MCP-tool-call |
-
-### 12.2 Shared cooldown (`poll_cooldown_ms`)
-
-`poll_cooldown_ms` is shared between two paths so MCP tool calls and `get_task_result` polls cannot outrun the LLM-side poller:
-
-- `Eai.MCP.Adapter.do_execute/5` — sleeps `poll_cooldown_ms` at function entry (before `Anubis.Client.call_tool`).
-- Tool implementations of `get_task_result` / `get_subagent_result` — sleep after every poll (see `config/tools/*`).
-
-Tune at runtime via `set_config(poll_cooldown_ms = 3000)`.
-
-### 12.3 Shared timeout window
-
-`Eai.ResultCollector.check_timeout_window/1` is called at the tail of two paths, consuming one depth layer and appending a "wrap up" reminder to the result string:
-
-- `Eai.MCP.Adapter.do_execute/5` — appends reminder to MCP tool result when `pty_session_id` is non-nil.
-- `get_task_result` tool — appends reminder to task result.
-
-Trigger from IEx with `Eai.Task.trigger_timeout_window("default", depth)` (default depth = 1).
-
-### 12.4 Common runtime warnings
-
-| Warning | Cause | Action |
-|---------|-------|--------|
-| `mtime ... was set to the future, resetting to now` | FS clock skew between container and host | Harmless; ignore or `touch` the file |
-| `unused require Logger` in `lib/eai/adapter/*.ex` | Adapter used to log via Logger, now uses `:telemetry.execute` | Already migrated; if it reappears, the adapter lost its telemetry call |
-| `File.exists?(priv_link)` type warning | Was passing `nil` to `File.exists?/1` | Fixed by routing `nil` cases through the early `priv_src == nil` branch in `Eai.Sandbox.PTYPool.maybe_link_priv/3` |
-| `dialyzer: pattern can never match the type` | Dead branch after type narrowing | Inspect the type spec; usually means a defensive branch is unreachable — delete it |
-
-### 12.5 Application boot order
-
-`Eai.Application.start/2` builds a supervisor tree that, when `:start_application` is true:
-
-1. `Phoenix.PubSub` (`Eai.Naming.pubsub()`)
-2. `Eai.Cache.Cache`
-3. `Eai.Sandbox.PTYPool`
-4. `Eai.MCP`
-5. `{Eai.Chat, []}`
-6. `Eai.API` (only when `config :eai, :api, enabled: true`) — started as an explicit child spec wrapping `Bandit.start_link/1`, not as the module itself. If you change `Eai.API` to a `use GenServer`, also remove the custom child spec.
-
----
-
-*Generated from codebase analysis. Last updated: version 0.1.13.*
+- **External integrations via CLI** — no framework code for MCP/browsers/etc. Use `execute_script` + CLI tools

@@ -23,8 +23,8 @@ defmodule Eai do
     ## 让模型"主动停手"（中断 loop）
     当模型陷入多余的工具循环（反复轮询、栈大量小命令）时，可用 timeout 窗口：
     Eai.ResultCollector.trigger_timeout_window("pty_session_id", 1)
-      → 下一轮 LLM 请求会看到一条 user 提示：“The timeout you set has been reached.
-        Please safely stop what you're doing and reply now.”
+      → 下一轮 LLM 请求会看到一条 user 提示："The timeout you set has been reached.
+        Please safely stop what you're doing and reply now."
       → depth 是连续提示的轮数（1 = 提示一次；2 = 连续两轮都提示）。
     Eai.ResultCollector.check_timeout_window("pty_session_id")  → 内部使用
     Eai.Chat.close_chat_session("session")    → 关闭会话
@@ -64,6 +64,16 @@ defmodule Eai do
     Eai.Record.start_link("dir", "session")  → GenServer 启动
     Eai.Record.stop()                        → 停止记录
 
+    ## 外部 CLI 工具（通过 execute_script 调用）
+    mcporter          — MCP 客户端 (npm install -g mcporter)
+      mcporter list [server]    → 列出 MCP 服务器/工具
+      mcporter call srv.tool key=value ...  → 调用 MCP 工具
+      mcporter serve --stdio    → 暴露为 MCP bridge
+    agent-browser     — 无头浏览器 CLI (npm install -g agent-browser)
+      agent-browser open <url>  → 打开页面
+      agent-browser snapshot -i → 快照（紧凑 @eN 引用）
+      agent-browser click @e1   → 交互
+
     ## 工具函数（LLM 或用户直接调用）
     #{tool_table()}
 
@@ -81,21 +91,26 @@ defmodule Eai do
       opts: %{model: :gpt4o, system_prompt: :coder, chat_session_id: "id", ...}
 
     ## Hook 管理
-    Eai.Hub.reload!()                       → :ok (hot-reload hooks from config/hooks/)
-    Eai.Hub.Loader.print_hooks()            → 打印当前注册的 hooks 及优先级
-    Eai.Hub.Loader.list_files()             → {:ok, ["01_example.exs", ...]}
-    Eai.Hub.Loader.current_hooks()          → [{ModuleName, priority}, ...]
+    Eai.Hub.reload!()                           → :ok (hot-reload hooks from config/hooks/)
+    Eai.Hub.Loader.print_hooks()                → 打印当前注册的 hooks 及优先级
+    Eai.Hub.Loader.list_files()                 → {:ok, ["01_example.exs", ...]}
+    Eai.Hub.Loader.current_hooks()              → [{ModuleName, priority}, ...]
     :persistent_term.erase(:eai_hooks); Eai.Hub.reload!()  → 强制全量重载
 
     ## 自动快照回滚（内置 hook）
     config/hooks/03_auto_snapshot.exs (priority=5)
       每次 LLM 请求前自动快照会话历史；请求失败时自动回滚到干净状态。
-      防止损坏的消息序列（如重复 tool_call_id）永久污染会话。
+      防止重复 tool_call_id 导致的上下文污染（如连续 assistant tool_use 消息）。
+
+    ## 思考段空输出修复（内置 hook）
+    config/hooks/04_fix_empty_thinking.exs (priority=25)
+      当 LLM 返回推理/思考内容但无文本输出且无工具调用时，
+      自动将 thinking 内容注入 text 块，防止 OpenAI 400 错误。
 
     ## 调试环境变量
     EAI_DEBUG_PTY=1           原始 PTY 输出
     EAI_DEBUG_LLM_REQUEST=1   打印完整 LLM 请求体
-    EAI_WORK_DIR=/path        沙箱根目录
+    EAI_WORK_DIR=/path        自定义 PTY 工作根目录
     OPENAI_API_KEY / DEEPSEEK_API_KEY / ANTHROPIC_API_KEY
     """)
   end
@@ -122,7 +137,8 @@ defmodule Eai do
       {"export_context", "%{\"file_path\"=>\"...\"} -> ok", "Eai.Tool.ExportContext"},
       {"replace_context", "%{\"file_path\"=>\"...\", \"format\"=>\"converse\"} -> ok",
        "Eai.Tool.ReplaceContext"},
-      {"list_chat_sessions", "{} -> 会话列表", "Eai.Tool.ListChatSessions"}
+      {"list_chat_sessions", "{} -> 会话列表", "Eai.Tool.ListChatSessions"},
+      {"hub_reload", "{} -> {:hooks => result}", "Eai.Tool.HubReload"}
     ]
 
     header =
