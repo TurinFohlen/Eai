@@ -92,6 +92,10 @@ config :eai, :telemetry_events, [
 import_config "#{config_env()}.exs"
 # ── API Endpoint ─────────────────────────────────────────────────────────────
 # OpenAI-compatible HTTP API. External tools (chatgpt-on-wechat, bots, n8n)
+#
+# `port` accepts:
+#   - integer  (e.g. 4002)          — fixed port
+#   - :auto    (or "auto")          — random port in 1024–49151, auto-verified free
 # can use eai as a drop-in OpenAI replacement.
 config :eai, :api,
   enabled: true,

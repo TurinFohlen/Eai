@@ -48,7 +48,7 @@ defmodule Eai.Application do
 
   defp api_child_spec do
     api_config = Application.get_env(:eai, :api, [])
-    port = Keyword.get(api_config, :port, 4000)
+    port = resolve_port(Keyword.get(api_config, :port, 4000))
     host = Keyword.get(api_config, :host, "0.0.0.0")
 
     IO.puts("🌐 Eai API listening on http://#{host}:#{port}")
@@ -72,6 +72,38 @@ defmodule Eai.Application do
       start: {Bandit, :start_link, [bandit_opts]},
       type: :supervisor
     }
+  end
+
+  @doc """
+  Resolve the API port.
+
+  If `port` is `:auto` (or `"auto"`), picks a random port in 1024–49151,
+  verifies it is free by briefly binding a TCP socket, and stores the
+  result in `:persistent_term` under `:eai_api_port`.
+
+  Retries up to 10 times if the chosen port happens to be in use.
+  """
+  def resolve_port(:auto), do: resolve_port("auto")
+  def resolve_port("auto") do
+    resolved = pick_free_port(10)
+    :persistent_term.put(:eai_api_port, resolved)
+    resolved
+  end
+  def resolve_port(port) when is_integer(port), do: port
+
+  defp pick_free_port(0), do: raise("could not find a free port after 10 attempts")
+  defp pick_free_port(retries) do
+    port = 1024 + :rand.uniform(49151 - 1024)
+
+    case :gen_tcp.listen(0, [{:port, port}, :inet, {:ip, {127, 0, 0, 1}}]) do
+      {:ok, sock} ->
+        :gen_tcp.close(sock)
+        port
+      {:error, :eaddrinuse} ->
+        pick_free_port(retries - 1)
+      {:error, reason} ->
+        raise "unexpected error probing port #{port}: #{inspect(reason)}"
+    end
   end
 
   defp parse_host(host) when is_binary(host) do
