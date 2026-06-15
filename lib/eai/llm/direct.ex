@@ -112,6 +112,12 @@ defmodule Eai.LLM.Direct do
     {messages, prompt, schemas, opts} = prepare_run_context(messages, prompt, opts)
 
     # ── LLM pre-hooks ──────────────────────────────────────────────
+    req_ctx = %{
+      adapter: adapter, model: model, prompt: prompt, schemas: schemas,
+      provider: provider, api_key: api_key, url: url,
+      timeout: timeout, effort: effort
+    }
+
     case Pipeline.llm_pre_hooks(messages, pty_session_id, chat_session_id, opts) do
       {:block, reason} ->
         Logger.warning("LLM request blocked by hook: #{reason}")
@@ -119,12 +125,10 @@ defmodule Eai.LLM.Direct do
 
       {:modify, %{messages: messages, pty_session_id: pty_session_id,
                   chat_session_id: chat_session_id, opts: opts}} ->
-        do_run(messages, pty_session_id, chat_session_id, opts, adapter, model, prompt,
-               schemas, provider, api_key, url, timeout, effort)
+        do_run(messages, pty_session_id, chat_session_id, opts, req_ctx)
 
       :ok ->
-        do_run(messages, pty_session_id, chat_session_id, opts, adapter, model, prompt,
-               schemas, provider, api_key, url, timeout, effort)
+        do_run(messages, pty_session_id, chat_session_id, opts, req_ctx)
     end
   end
 
@@ -164,8 +168,11 @@ defmodule Eai.LLM.Direct do
 
     # ── Execute LLM request (extracted for hook rebind) ────────────
 
-  defp do_run(messages, pty_session_id, chat_session_id, opts, adapter, model, prompt,
-              schemas, provider, api_key, url, timeout, effort) do
+  defp do_run(messages, pty_session_id, chat_session_id, opts, req_ctx) do
+    %{adapter: adapter, model: model, prompt: prompt, schemas: schemas,
+      provider: provider, api_key: api_key, url: url,
+      timeout: timeout, effort: effort} = req_ctx
+
     adapter_opts = [reasoning_effort: effort]
     req = adapter.to_request_body(messages, model, prompt, schemas, adapter_opts)
     req_url = if is_nil(req.url), do: url, else: req.url
