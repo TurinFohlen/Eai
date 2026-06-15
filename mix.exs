@@ -28,8 +28,6 @@ defmodule Eai.MixProject do
       # HTTP client
       {:req, "~> 0.5"},
       {:finch, "~> 0.19"},
-      # MCP client (Model Context Protocol)
-      {:anubis_mcp, "~> 1.6"},
       {:plug, "~> 1.16"},
       {:jason, "~> 1.4.5"},
 
@@ -53,7 +51,7 @@ defmodule Eai.MixProject do
   defp package do
     [
       name: :eai,
-      description: "Extreme minimal AI assistant with persistent PTY and recursive sub-agents",
+      description: "Extreme minimal AI assistant with persistent PTY, recursive sub-agents, and CLI-based MCP/browser integration (mcporter, agent-browser)",
       files: [
         "lib",
         "priv",

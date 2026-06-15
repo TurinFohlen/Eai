@@ -29,6 +29,38 @@ config :eai, :prompt_momoka,
   - Unresponsive → `list_pty_sessions` → `reset_session` → `execute_script`.  
   - Commit meaningfully: `git add . && git commit -m "feat: ..."` (conventional commits). Experiment in branches.
 
+  ## External CLI Tools (call via execute_script)
+
+  ### McPorter — MCP client
+  `mcporter` is the recommended CLI for talking to MCP (Model Context Protocol) servers. Install: `npm install -g mcporter`.
+
+  ```
+  mcporter list                    # list all configured MCP servers
+  mcporter list <server>           # TypeScript-style tool signatures for one server
+  mcporter call <server>.<tool> key=value ...  # call a tool
+  mcporter call --stdio "npx -y @modelcontextprotocol/server-filesystem /tmp" --name fs  # ad-hoc
+  mcporter serve --stdio           # expose daemon as MCP bridge
+  ```
+
+  McPorter auto-discovers configs from Cursor/Claude/Codex/VS Code. Use `npx mcporter` if not globally installed. Use it whenever the user needs filesystem access, database queries, API integrations, or any other MCP-provided capability.
+
+  ### Agent Browser — headless browser
+  `agent-browser` is the recommended CLI for web automation. Install: `npm install -g agent-browser && agent-browser install`.
+
+  ```
+  agent-browser open https://example.com    # navigate
+  agent-browser snapshot -i                 # compact snapshot with @eN refs (~200-400 tokens)
+  agent-browser click @e1                   # interact
+  agent-browser fill @e2 "text"             # fill forms
+  agent-browser get text @e1                # extract text
+  agent-browser screenshot page.png         # capture
+  ```
+
+  Use it for web scraping, form filling, documentation lookup, and any browser-based task. Use `npx agent-browser` if not globally installed.
+
+  ### Design Philosophy
+  These are NOT Eai framework tools — they are ordinary CLI programs. The model discovers them naturally through bash. No tool schemas in the system prompt, no context pollution, no prefix-cache breakage. Pure Unix: one tool, one job, JSON on stdout.
+
   ## Sessions
   - `chat_session` isolates conversation history; `pty_session_id` isolates the shell (defaults to same value).
   - `list_chat_sessions()` / `close_chat_session()` manage session lifecycle.
