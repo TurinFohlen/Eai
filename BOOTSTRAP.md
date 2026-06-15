@@ -11,7 +11,7 @@ Eai is an **Elixir application** that gives an AI model a real, persistent Linux
 **One-liner architecture:**
 
 ```
-Eai.Chat → Eai.LLM.Direct (adapter → API) → tool loop → Eai.Sandbox.PTYPool + Eai.Task
+Eai.Chat → Eai.LLM.Direct (adapter → API) → tool loop → Eai.Sandbox.PTYPool + Eai.ResultCollector
 ```
 
 ---
@@ -31,6 +31,7 @@ eai/
 │   │   └── gdrive.exs          #   Google Drive via @isaacphi/mcp-gdrive (requires OAuth)
 │   ├── tools/                  # 14 self-contained tool files (.exs) - plugin architecture
 │   ├── prompts/                # Individual prompt files per persona
+│   ├── hooks/                  # Hook .exs files (numeric prefix = load order)
 │   ├── chara_cards/            # Character Card V2 JSON files (SillyTavern-compatible)
 │   ├── dev.exs / prod.exs / runtime.exs / test.exs
 │   └── models/                 # Per-model config overrides (optional)
@@ -47,7 +48,11 @@ eai/
 │   ├── sandbox.ex              # Sandbox behaviour
 │   ├── sandbox/pty_pool.ex     # PTY GenServer pool - spawns/kills/resets bash shells
 │   ├── sandbox/result_collector.ex
-│   ├── task.ex                 # Task result buffer (sentinel-based), interrupt/timeout flags
+│   ├── hooks/hook.ex           # Eai.Hook behaviour + __using__ macro
+│   ├── hooks/hub.ex            # Eai.Hub.run/3 central dispatch + reload!/0
+│   ├── hooks/pipeline.ex       # pre/post/llm_pre/llm_post hook pipelines
+│   ├── hooks/loader.ex         # Read-only hook introspection
+│   ├── hooks/reloader.ex       # Hot-reload hooks from config/hooks/*.exs
 │   ├── tool.ex                 # Tool behaviour (schema/0 + execute/4)
 │   ├── tool/helpers.ex         # Shared tool utilities (vision, sandbox cfg, unescape)
 │   ├── record.ex               # Background persistence → gzip logs
@@ -149,7 +154,7 @@ Both `execute_script` and `call_subagent` support SBC via `sbc: true` flag. SBC 
 
 1. **Spawn:** `Eai.Sandbox.PTYPool` creates a bash PTY per `pty_session_id` in `work_dir_root/<session>/`
 2. **Execute:** Tool writes a temp script, runs `bash <script>`, captures output between sentinels
-3. **Collect:** `Eai.Task.collect/2` buffers PTY output, strips ANSI escape codes, extracts between `___EAI_START___` / `___EAI_END___`
+3. **Collect:** `Eai.ResultCollector.collect/2` buffers PTY output, strips ANSI escape codes, extracts between `___EAI_START___` / `___EAI_END___`
 4. **Reset:** `reset_session` kills the PTY process, which auto-spawns on next command
 5. **Interrupt:** Ctrl-C injected via `write_to_session("\x03")`
 
@@ -263,7 +268,86 @@ MCP: skipping :oops - invalid transport format: [layer: ...]
 
 **Adding a new server:** create `config/mcp_servers/<name>.exs`, write the config, call `Eai.MCP.reload!()`.
 
-### 3.9 Sub-Agent Economics
+### 3.9 Hook Framework
+
+Every tool call and LLM HTTP request flows through a central dispatch (Eai.Hub.run/3):
+config/hooks/*.exs → Code.compile_file → Pipeline.register/1 → :persistent_term → Pipeline.pre_hooks / post_hooks
+
+| Event | Scope | When |
+|-------|-------|------|
+| :pre / :post | Tool | Before/after tool execution |
+| :llm_pre / :llm_post | LLM | Before/after each HTTP request |
+
+Hook file example (config/hooks/10_my_guard.exs):
+  defmodule MyGuard do
+    use Eai.Hook, priority: 10
+    def interest(:pre, tool_name, _payload), do: String.contains?(tool_name, "WriteToSession")
+    def verdict(:pre, _tool, %{args: [cmd | _]}) when is_binary(cmd) do
+      if String.contains?(cmd, "rm -rf /"), do: {:block, "nope"}, else: :ok
+    end
+  end
+
+Built-in hooks:
+  01_example.exs (p=10) — blocks dangerous shell patterns
+  02_session_log.exs (p=20) — fires telemetry for every tool/LLM event
+  03_auto_snapshot.exs (p=5) — two-tier ETS snapshot + rollback on LLM errors
+
+Management:
+  Eai.Hub.reload!()              — hot-reload all hooks
+  Eai.Hub.Loader.print_hooks()   — list current hooks with priorities
+### 3.9 Hook Framework
+
+Every tool call and LLM HTTP request flows through a central dispatch (`Eai.Hub.run/3`):
+
+```
+config/hooks/*.exs → Code.compile_file → Pipeline.register/1 → :persistent_term
+                         ↓
+Eai.Hub.run/3 → Pipeline.pre_hooks / post_hooks (tool)
+Eai.LLM.Direct → Pipeline.llm_pre_hooks / llm_post_hooks (LLM)
+```
+
+| Event | Scope | When |
+|-------|-------|------|
+| `:pre` / `:post` | Tool | Before/after tool execution |
+| `:llm_pre` / `:llm_post` | LLM | Before/after each HTTP request |
+
+**Hook file example** (`config/hooks/10_my_guard.exs`):
+
+```elixir
+defmodule MyGuard do
+  use Eai.Hook, priority: 10
+
+  def interest(:pre, tool_name, _payload),
+    do: String.contains?(tool_name, "WriteToSession")
+  def interest(_event, _tool, _payload), do: false
+
+  def verdict(:pre, _tool, %{args: [cmd | _]}) when is_binary(cmd) do
+    if String.contains?(cmd, "rm -rf /"), do: {:block, "nope"}, else: :ok
+  end
+  def verdict(:pre, _tool, _payload), do: :ok
+  def verdict(:post, _tool, _payload, _result), do: :ok
+  def verdict(:llm_pre, _tool, _payload), do: :ok
+  def verdict(:llm_post, _tool, _payload, _result), do: :ok
+end
+```
+
+**Built-in hooks:**
+
+| File | Priority | Purpose |
+|------|----------|---------|
+| `01_example.exs` | 10 | Blocks dangerous shell patterns |
+| `02_session_log.exs` | 20 | Fires telemetry for every tool/LLM event |
+| `03_auto_snapshot.exs` | 5 | Two-tier ETS snapshot + automatic rollback on LLM errors |
+
+**Management:**
+
+```bash
+Eai.Hub.reload!()              # Hot-reload all hooks
+Eai.Hub.Loader.print_hooks()   # List current hooks with priorities
+:persistent_term.erase(:eai_hooks); Eai.Hub.reload!()  # Force full reload
+```
+
+### 3.10 Sub-Agent Economics
 
 `call_subagent` creates a **fresh agent context** with only system prompt + task message. This is ~50× cheaper per round-trip than running the same task in the main context. Supports session reuse (`chat_session`) and prefix caching (`pre_context`) for repeated operations.
 
@@ -284,15 +368,21 @@ Eai.LLM.Direct
   │  1. Resolves model entry (Eai.Models), prompt text (Eai.Prompts)
   │  2. Loads tool schemas from config/tools/ (lazy, cached in :persistent_term)
   │  3. Builds request via adapter.to_request_body(messages, model, prompt, tools)
-  │  4. POSTs to provider URL (Req.post)
+  │  4a. [LLM pre-hooks] Pipeline.llm_pre_hooks — hook modules intercept/block/modify request context
+  │  4b. POSTs to provider URL (Req.post)
+  │  4c. [LLM post-hooks] Pipeline.llm_post_hooks — hook modules observe/rollback/transform response
   │  5. Parses response via adapter.from_response(resp_body) → Eai.Message
   │
   ├── No tool_use → return {:ok, reply_text, history}
   │
   └── Has tool_use → Tool Loop:
         │
+        ├── [Tool pre-hooks] Eai.Hub.run → Pipeline.pre_hooks — block/modify args
+        ├── [Tool pre-hooks] Eai.Hub.run → Pipeline.pre_hooks — block/modify args
         ├── Dispatch each tool via Eai.Tool behaviour (execute/4)
-        ├── Tool may call PTYPool.exec_async → PTY runs bash → Task.collect/2
+        ├── [Tool post-hooks] Pipeline.post_hooks — block/modify results
+        ├── [Tool post-hooks] Pipeline.post_hooks — block/modify results
+        ├── Tool may call PTYPool.exec_async → PTY runs bash → ResultCollector.collect/2
         ├── Build tool_result user messages
         ├── Prune stale polls (dedup_stale_task_polls / dedup_stale_subagent_polls)
         └── Recurse: Direct.run(updated_messages, ...) → back to LLM
@@ -310,8 +400,13 @@ Eai.LLM.Direct
 | `Eai.MCP.Adapter` | Module | MCP tool → Eai.Tool module builder |
 | `Eai.Chat` | GenServer | Multi‑session chat history, async task dispatch |
 | `Eai.LLM.Direct` | Module | Tool-calling loop, adapter dispatch, poll dedup |
+| `Eai.Hook` | Behaviour | Hook contract (interest + verdict callbacks) |
+| `Eai.Hub` | Module | Central dispatch bus for tool + LLM call interception |
+| `Eai.Hub.Pipeline` | Module | Pre/post hook execution with priority ordering |
+| `Eai.Hub.Loader` | Module | Read-only hook introspection (list_files, print_hooks) |
+| `Eai.Hub.Reloader` | Module | Hot-reload hooks from config/hooks/*.exs |
 | `Eai.Sandbox.PTYPool` | GenServer | PTY lifecycle (spawn, exec, reset, interrupt) |
-| `Eai.Task` | Module | Sentinel-based output collection, interrupt/timeout flags |
+| `Eai.ResultCollector` | Module | Sentinel-based output collection, interrupt/timeout flags |
 | `Eai.Message` | Module | Converse-based IR constructors & accessors |
 | `Eai.Adapter.OpenAI` | Module | IR ↔ OpenAI Chat Completions |
 | `Eai.Adapter.Anthropic` | Module | IR ↔ Anthropic Messages API |
@@ -335,15 +430,26 @@ Eai.LLM.Direct
 
 ```elixir
 config :eai, :default_model, :deepseek            # default LLM
+config :eai, :api,
+  enabled: true,
+  port: 4002,             # or :auto for random port in 1024–49151
+  host: "0.0.0.0"
+
 config :eai, :poll_cooldown_ms, 2_000              # min polling interval
 config :eai, :sandbox,
   work_dir_root: "/home/eai_agents",               # PTY working dirs
   sentinel_left:  "___EAI_START___",               # output extraction markers
   sentinel_right: "___EAI_END___",
+config/hooks/            — hook .exs files (numeric prefix = load order)
   pty_cols: 200, pty_rows: 50,
   pty_init_sleep_ms: 200, pty_ready_sleep_ms: 300,
   debug_pty_output: false                          # set EAI_DEBUG_PTY=1 to override
 ```
+
+config :eai, :api,
+  enabled: true,
+  port: 4002,             # or :auto for random port in 1024–49151
+  host: "0.0.0.0"
 
 ### config/models.exs (model entries)
 
