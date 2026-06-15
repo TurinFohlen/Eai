@@ -10,4 +10,7 @@ chat_records/
 *.bak
 # OS
 .DS_Store
-Thumbs.db
+Thumbs.db__pycache__/
+*.pyc
+-e __pycache__/
+*.pyc
