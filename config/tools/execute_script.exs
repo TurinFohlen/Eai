@@ -42,7 +42,8 @@ defmodule Eai.Tool.ExecuteScript do
             pty_session_id: %{type: "string", description: "PTY session ID (default: 'default')."},
             sbc: %{
               type: "boolean",
-              description: "Synchronous Blocking Call. If true, waits for completion and returns output directly (saves 2 roundtrips). Default: false (ACC mode). Only use for tasks expected to finish quickly (<30s)."
+              description:
+                "Synchronous Blocking Call. If true, waits for completion and returns output directly (saves 2 roundtrips). Default: false (ACC mode). Only use for tasks expected to finish quickly (<30s)."
             }
           },
           required: ["script"]
@@ -65,7 +66,6 @@ defmodule Eai.Tool.ExecuteScript do
          :ok <- debug_script(path, script),
          {:ok, ^task_id} <-
            Eai.Naming.pool().exec_async(sid, "bash #{path}; rm -f #{path}", task_id) do
-
       if sbc do
         sbc_wait(task_id, sid)
       else
@@ -90,6 +90,7 @@ defmodule Eai.Tool.ExecuteScript do
     # Check interrupt flag
     if Eai.ResultCollector.check_and_clear_interrupt_flag(pty_session_id) do
       Eai.Naming.pool().interrupt_task(pty_session_id)
+
       %{status: "interrupted", task_id: task_id}
       |> Eai.Utils.sanitize_value()
       |> Jason.encode!()
@@ -108,6 +109,7 @@ defmodule Eai.Tool.ExecuteScript do
           Logger.warning("SBC timeout for #{task_id}, force-completing")
           {:ok, output} = Eai.ResultCollector.force_complete(task_id)
           Eai.Naming.pool().clear_task(pty_session_id, task_id)
+
           %{status: "timeout", output: output, task_id: task_id}
           |> Eai.Utils.sanitize_value()
           |> Jason.encode!()

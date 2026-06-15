@@ -105,11 +105,13 @@ defmodule Eai.Card do
   @spec list() :: :ok
   def list do
     IO.puts("\nAvailable chara cards:\n")
+
     Enum.each(all(), fn c ->
       name = c[:name] |> inspect() |> String.pad_trailing(20)
       desc = c[:description] || "(no description)"
       IO.puts("  #{name}  #{desc}")
     end)
+
     IO.puts("")
   end
 
@@ -134,7 +136,12 @@ defmodule Eai.Card do
   def to_opts(card) do
     opts = []
     opts = if card[:model], do: [{:model, card[:model]} | opts], else: opts
-    opts = if card[:system_prompt], do: [{:card_system_prompt, card[:system_prompt]} | opts], else: opts
+
+    opts =
+      if card[:system_prompt],
+        do: [{:card_system_prompt, card[:system_prompt]} | opts],
+        else: opts
+
     opts = if card[:tools], do: [{:card_tools, card[:tools]} | opts], else: opts
     opts = if card[:pre_context], do: [{:card_pre_context, card[:pre_context]} | opts], else: opts
     opts

@@ -100,18 +100,30 @@ defmodule Eai.Tool.WriteToSession do
   defp unescape(input) do
     input
     # ANSI / extended keys (process before single chars to avoid partial matches)
-    |> String.replace("\\e[1~", "\e[1~")    # Home
-    |> String.replace("\\e[2~", "\e[2~")    # Insert
-    |> String.replace("\\e[3~", "\e[3~")    # Delete
-    |> String.replace("\\e[4~", "\e[4~")    # End
-    |> String.replace("\\e[5~", "\e[5~")    # PgUp
-    |> String.replace("\\e[6~", "\e[6~")    # PgDn
-    |> String.replace("\\e[A", "\e[A")      # Up
-    |> String.replace("\\e[B", "\e[B")      # Down
-    |> String.replace("\\e[C", "\e[C")      # Right
-    |> String.replace("\\e[D", "\e[D")      # Left
-    |> String.replace("\\e[H", "\e[H")      # Home (alt form)
-    |> String.replace("\\e[F", "\e[F")      # End (alt form)
+    # Home
+    |> String.replace("\\e[1~", "\e[1~")
+    # Insert
+    |> String.replace("\\e[2~", "\e[2~")
+    # Delete
+    |> String.replace("\\e[3~", "\e[3~")
+    # End
+    |> String.replace("\\e[4~", "\e[4~")
+    # PgUp
+    |> String.replace("\\e[5~", "\e[5~")
+    # PgDn
+    |> String.replace("\\e[6~", "\e[6~")
+    # Up
+    |> String.replace("\\e[A", "\e[A")
+    # Down
+    |> String.replace("\\e[B", "\e[B")
+    # Right
+    |> String.replace("\\e[C", "\e[C")
+    # Left
+    |> String.replace("\\e[D", "\e[D")
+    # Home (alt form)
+    |> String.replace("\\e[H", "\e[H")
+    # End (alt form)
+    |> String.replace("\\e[F", "\e[F")
     # ESC variants
     |> String.replace("\\x1b", "\x1b")
     |> String.replace("\\e", "\e")

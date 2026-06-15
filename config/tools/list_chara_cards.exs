@@ -9,13 +9,14 @@ defmodule Eai.Tool.ListCharaCards do
         name: "list_chara_cards",
         description:
           "List all available character cards with name, description, model, and tools. " <>
-          "Optionally filter by a search term matching name or description.",
+            "Optionally filter by a search term matching name or description.",
         parameters: %{
           type: "object",
           properties: %{
             filter: %{
               type: "string",
-              description: "Optional case-insensitive search term to filter cards by name or description."
+              description:
+                "Optional case-insensitive search term to filter cards by name or description."
             }
           },
           required: []
@@ -43,6 +44,7 @@ defmodule Eai.Tool.ListCharaCards do
           all
         else
           term = String.downcase(filter)
+
           Enum.filter(all, fn c ->
             String.contains?(String.downcase(to_string(c[:name])), term) or
               String.contains?(String.downcase(c[:description] || ""), term)

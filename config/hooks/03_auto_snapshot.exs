@@ -56,6 +56,7 @@ defmodule Eai.Hook.AutoSnapshot do
     case :ets.lookup(@table_name, current_key) do
       [{^current_key, old_snapshot}] ->
         :ets.insert(@table_name, {grandpa_key, old_snapshot})
+
       [] ->
         :ok
     end
@@ -74,9 +75,7 @@ defmodule Eai.Hook.AutoSnapshot do
   # ── Post-hook: detect error, rollback ────────────────────────────────
 
   @impl true
-  def verdict(:llm_post, _tool,
-              %{chat_session_id: csid},
-              {:error, reason, _}) do
+  def verdict(:llm_post, _tool, %{chat_session_id: csid}, {:error, reason, _}) do
     ensure_table!()
 
     # Try current snapshot first, fall back to grandfather

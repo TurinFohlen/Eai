@@ -7,6 +7,7 @@ defmodule Eai.Adapter.Converse do
   @impl true
   def to_request_body(messages, model, system_prompt, tools, opts) do
     region = Keyword.get(opts, :region, System.get_env("AWS_REGION", "us-east-1"))
+
     :telemetry.execute(
       [:eai, :adapter, :converse, :to_request_body],
       %{msgs: length(messages), tools: length(tools)},
@@ -62,6 +63,7 @@ defmodule Eai.Adapter.Converse do
       %{blocks: length(content)},
       %{shape: :output_message}
     )
+
     blocks = Enum.map(content, &block_from_converse/1)
     %{role: :assistant, content: blocks}
   end
@@ -72,6 +74,7 @@ defmodule Eai.Adapter.Converse do
       %{blocks: length(content)},
       %{shape: :content_array}
     )
+
     blocks = Enum.map(content, &block_from_converse/1)
     %{role: :assistant, content: blocks}
   end
@@ -83,6 +86,7 @@ defmodule Eai.Adapter.Converse do
       %{count: length(raw_messages)},
       %{}
     )
+
     Enum.map(raw_messages, &Message.from_converse_map/1)
   end
 

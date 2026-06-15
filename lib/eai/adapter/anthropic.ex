@@ -6,6 +6,7 @@ defmodule Eai.Adapter.Anthropic do
   @impl true
   def to_request_body(messages, model, system_prompt, tools, opts) do
     effort = Keyword.get(opts, :reasoning_effort)
+
     :telemetry.execute(
       [:eai, :adapter, :anthropic, :to_request_body],
       %{msgs: length(messages), tools: length(tools)},
@@ -56,6 +57,7 @@ defmodule Eai.Adapter.Anthropic do
       %{blocks: length(blocks)},
       %{}
     )
+
     ir_blocks = Enum.map(blocks, &anthropic_block_to_ir/1)
 
     ir_blocks =
@@ -75,6 +77,7 @@ defmodule Eai.Adapter.Anthropic do
       %{count: length(raw_messages)},
       %{}
     )
+
     Enum.flat_map(raw_messages, fn
       %{"role" => "user", "content" => content} ->
         blocks = content |> List.wrap() |> Enum.map(&anthropic_content_to_ir_block/1)
@@ -192,7 +195,8 @@ defmodule Eai.Adapter.Anthropic do
   # Put a cache_control marker on the last content block of a message.
   # Falls through unchanged if the content isn't a non-empty list (e.g. legacy
   # string content or empty content).
-  defp put_cache_on_last_block(%{content: content} = msg) when is_list(content) and content != [] do
+  defp put_cache_on_last_block(%{content: content} = msg)
+       when is_list(content) and content != [] do
     case List.pop_at(content, -1) do
       {nil, _} ->
         msg

@@ -102,6 +102,8 @@ defmodule Eai do
 
   defp tool_table do
     tools = [
+      {"Eai.Hub.reload!()", "Hot-reload all hooks", "Hook management"},
+      {"Eai.Hub.Loader.print_hooks()", "List registered hooks + priorities", "Hook management"},
       {"execute_script", "%{\"script\"=>\"...\"} -> task_id", "Eai.Tool.ExecuteScript"},
       {"get_task_result", "%{\"task_id\"=>\"...\"} -> 结果", "Eai.Tool.GetTaskResult"},
       {"write_to_session", "%{\"input\"=>\"y\\\\n\"} -> ok", "Eai.Tool.WriteToSession"},

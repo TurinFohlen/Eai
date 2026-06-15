@@ -40,6 +40,7 @@ defmodule Eai.Hub.Loader do
           files
           |> Enum.filter(&String.ends_with?(&1, ".exs"))
           |> Enum.sort()
+
         {:ok, sorted}
 
       {:error, _} = err ->

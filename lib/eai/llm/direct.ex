@@ -39,6 +39,7 @@ defmodule Eai.LLM.Direct do
 
     # Merge: preserve any MCP tools already registered by Eai.MCP
     existing = :persistent_term.get(:eai_llm_tools, %{schemas: [], dispatch: %{}})
+
     merged = %{
       schemas: existing.schemas ++ registry.schemas,
       dispatch: Map.merge(existing.dispatch, registry.dispatch)
@@ -113,9 +114,15 @@ defmodule Eai.LLM.Direct do
 
     # ── LLM pre-hooks ──────────────────────────────────────────────
     req_ctx = %{
-      adapter: adapter, model: model, prompt: prompt, schemas: schemas,
-      provider: provider, api_key: api_key, url: url,
-      timeout: timeout, effort: effort
+      adapter: adapter,
+      model: model,
+      prompt: prompt,
+      schemas: schemas,
+      provider: provider,
+      api_key: api_key,
+      url: url,
+      timeout: timeout,
+      effort: effort
     }
 
     case Pipeline.llm_pre_hooks(messages, pty_session_id, chat_session_id, opts) do
@@ -123,8 +130,13 @@ defmodule Eai.LLM.Direct do
         Logger.warning("LLM request blocked by hook: #{reason}")
         {:error, "LLM request blocked by hook: #{reason}", messages}
 
-      {:modify, %{messages: messages, pty_session_id: pty_session_id,
-                  chat_session_id: chat_session_id, opts: opts}} ->
+      {:modify,
+       %{
+         messages: messages,
+         pty_session_id: pty_session_id,
+         chat_session_id: chat_session_id,
+         opts: opts
+       }} ->
         do_run(messages, pty_session_id, chat_session_id, opts, req_ctx)
 
       :ok ->
@@ -137,23 +149,28 @@ defmodule Eai.LLM.Direct do
   defp prepare_run_context(messages, prompt, opts) do
     # Card pre_context injection
     card_pre = Map.get(opts, :card_pre_context)
-    messages = if is_list(card_pre) and card_pre != [] do
-      card_pre ++ messages
-    else
-      messages
-    end
+
+    messages =
+      if is_list(card_pre) and card_pre != [] do
+        card_pre ++ messages
+      else
+        messages
+      end
 
     # Card system_prompt merge
     card_sys = Map.get(opts, :card_system_prompt)
-    prompt = if card_sys && card_sys != "" do
-      prompt <> "\n\n---\n## Role\n" <> card_sys
-    else
-      prompt
-    end
+
+    prompt =
+      if card_sys && card_sys != "" do
+        prompt <> "\n\n---\n## Role\n" <> card_sys
+      else
+        prompt
+      end
 
     # Tool filtering
     card_tools = Map.get(opts, :card_tools)
     %{schemas: schemas} = tools()
+
     {schemas, opts} =
       if is_list(card_tools) do
         allowed = MapSet.new(card_tools)
@@ -166,12 +183,20 @@ defmodule Eai.LLM.Direct do
     {messages, prompt, schemas, opts}
   end
 
-    # ── Execute LLM request (extracted for hook rebind) ────────────
+  # ── Execute LLM request (extracted for hook rebind) ────────────
 
   defp do_run(messages, pty_session_id, chat_session_id, opts, req_ctx) do
-    %{adapter: adapter, model: model, prompt: prompt, schemas: schemas,
-      provider: provider, api_key: api_key, url: url,
-      timeout: timeout, effort: effort} = req_ctx
+    %{
+      adapter: adapter,
+      model: model,
+      prompt: prompt,
+      schemas: schemas,
+      provider: provider,
+      api_key: api_key,
+      url: url,
+      timeout: timeout,
+      effort: effort
+    } = req_ctx
 
     adapter_opts = [reasoning_effort: effort]
     req = adapter.to_request_body(messages, model, prompt, schemas, adapter_opts)
@@ -294,11 +319,14 @@ defmodule Eai.LLM.Direct do
   defp handle_tool_calls(assistant_msg, history, pty_session_id, chat_session_id, opts) do
     %{dispatch: dispatch} = tools()
     allowlist = Map.get(opts, :tools_allowlist)
-    dispatch = if allowlist do
-      Map.filter(dispatch, fn {name, _} -> MapSet.member?(allowlist, name) end)
-    else
-      dispatch
-    end
+
+    dispatch =
+      if allowlist do
+        Map.filter(dispatch, fn {name, _} -> MapSet.member?(allowlist, name) end)
+      else
+        dispatch
+      end
+
     tool_uses = Message.tool_uses(assistant_msg)
 
     new_user_messages =
@@ -309,6 +337,7 @@ defmodule Eai.LLM.Direct do
       end)
 
     new_user_messages = Enum.reverse(new_user_messages)
+
     all_messages =
       (history ++ new_user_messages)
       |> dedup_stale_task_polls()
@@ -338,6 +367,7 @@ defmodule Eai.LLM.Direct do
                   %{system_time: System.system_time()},
                   %{tool: name, pty_session_id: pty_session_id}
                 )
+
                 result
 
               {:block, reason} ->
@@ -346,6 +376,7 @@ defmodule Eai.LLM.Direct do
                   %{system_time: System.system_time()},
                   %{tool: name, pty_session_id: pty_session_id, reason: reason}
                 )
+
                 Jason.encode!(%{error: "tool blocked by hook: #{reason}"})
             end
 
@@ -390,6 +421,7 @@ defmodule Eai.LLM.Direct do
       all_messages
       |> Enum.reverse()
       |> Enum.reduce({[], false}, &reduce_task_poll/2)
+
     clean
   end
 
@@ -442,6 +474,7 @@ defmodule Eai.LLM.Direct do
       all_messages
       |> Enum.reverse()
       |> Enum.reduce({[], false}, &reduce_subagent_poll/2)
+
     clean
   end
 

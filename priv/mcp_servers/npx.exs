@@ -3,13 +3,11 @@
 # No auth needed — safe for first-run sanity check.
 # Adjust the last arg to change which directory is exposed.
 
-config :eai, :mcp_servers, [
+[
   {:filesystem,
    [
      transport:
-       {:stdio,
-        command: "npx",
-        args: ~w(-y @modelcontextprotocol/server-filesystem /tmp)},
+       {:stdio, command: "npx", args: ~w(-y @modelcontextprotocol/server-filesystem /tmp)},
      client_info: %{"name" => "Eai", "version" => "0.1.13"}
    ]}
 ]

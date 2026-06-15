@@ -58,6 +58,7 @@ defmodule Eai.Prompts do
   """
   @spec get(atom() | nil) :: prompt_entry() | nil
   def get(nil), do: default()
+
   def get(name) when is_atom(name),
     do: Enum.find(all(), fn e -> e[:name] == name end)
 
@@ -75,8 +76,10 @@ defmodule Eai.Prompts do
     case get(name) do
       nil ->
         raise ArgumentError,
-          "unknown prompt #{inspect(name)}; available: #{inspect(names())}"
-      entry -> entry
+              "unknown prompt #{inspect(name)}; available: #{inspect(names())}"
+
+      entry ->
+        entry
     end
   end
 
@@ -117,11 +120,13 @@ defmodule Eai.Prompts do
   @spec list() :: :ok
   def list do
     IO.puts("\nAvailable prompts:\n")
+
     Enum.each(all(), fn e ->
       n = e[:name] |> inspect() |> String.pad_trailing(16)
       d = e[:description] || "(no description)"
       IO.puts("  #{n}  #{d}")
     end)
+
     IO.puts("")
   end
 

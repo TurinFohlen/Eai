@@ -74,6 +74,7 @@ defmodule Eai.Hub do
           %{system_time: System.system_time()},
           %{tool: tool_name, phase: :pre, reason: reason}
         )
+
         {:block, reason}
 
       pre_result ->
@@ -95,6 +96,7 @@ defmodule Eai.Hub do
               %{system_time: System.system_time()},
               %{tool: tool_name, phase: :post, reason: reason}
             )
+
             {:block, reason}
 
           {:ok, final_result} ->

@@ -118,6 +118,7 @@ defmodule Eai.Hub.Pipeline do
           :ok | {:block, String.t()} | {:modify, map()}
   def llm_pre_hooks(messages, pty_session_id, chat_session_id, opts) do
     tool_name = "LLM_REQUEST"
+
     payload = %{
       messages: messages,
       pty_session_id: pty_session_id,
@@ -130,11 +131,18 @@ defmodule Eai.Hub.Pipeline do
     |> case do
       {:block, reason} ->
         {:block, reason}
-      %{messages: ^messages, pty_session_id: ^pty_session_id,
-        chat_session_id: ^chat_session_id, opts: ^opts} ->
+
+      %{
+        messages: ^messages,
+        pty_session_id: ^pty_session_id,
+        chat_session_id: ^chat_session_id,
+        opts: ^opts
+      } ->
         :ok
+
       ctx when is_map(ctx) ->
         {:modify, ctx}
+
       other ->
         other
     end
@@ -156,6 +164,7 @@ defmodule Eai.Hub.Pipeline do
           {:ok, any()} | {:block, String.t()}
   def llm_post_hooks(messages, pty_session_id, chat_session_id, opts, result) do
     tool_name = "LLM_REQUEST"
+
     payload = %{
       messages: messages,
       pty_session_id: pty_session_id,
@@ -291,6 +300,7 @@ defmodule Eai.Hub.Pipeline do
       %{system_time: System.system_time()},
       %{hook: hook_mod, callback: callback, error: inspect(error)}
     )
+
     Logger.warning("Hook error (fail open)",
       hook: inspect(hook_mod),
       callback: callback,

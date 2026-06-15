@@ -72,7 +72,8 @@ defmodule Eai.Tool.CallSubagent do
             },
             sbc: %{
               type: "boolean",
-              description: "If true, blocks until subagent completes and returns result directly (saves 2+ roundtrips). Default: false. Use for tasks expected to finish quickly (<60s). DO NOT use for tasks that might hang."
+              description:
+                "If true, blocks until subagent completes and returns result directly (saves 2+ roundtrips). Default: false. Use for tasks expected to finish quickly (<60s). DO NOT use for tasks that might hang."
             }
           },
           required: ["message"]
@@ -104,9 +105,7 @@ defmodule Eai.Tool.CallSubagent do
     if is_nil(existing_session) && pre_context_path && File.exists?(pre_context_path) do
       case Eai.Chat.replace_history(pre_context_path, chat_session_id, format_opt) do
         {:ok, count} ->
-          Logger.info(
-            "Subagent pre_context loaded: #{count} messages from #{pre_context_path}"
-          )
+          Logger.info("Subagent pre_context loaded: #{count} messages from #{pre_context_path}")
 
         {:error, reason} ->
           Logger.error("Subagent pre_context load failed: #{reason}")
@@ -172,9 +171,15 @@ defmodule Eai.Tool.CallSubagent do
   # never enter conversation history.
 
   defp sbc_result(chat_session_id, pty_session_id, message, model_opt, prompt_opt) do
-    subagent_task_id = dispatch_subagent(
-      chat_session_id, pty_session_id, message, model_opt, prompt_opt
-    )
+    subagent_task_id =
+      dispatch_subagent(
+        chat_session_id,
+        pty_session_id,
+        message,
+        model_opt,
+        prompt_opt
+      )
+
     sbc_wait(subagent_task_id, chat_session_id, 60)
   end
 
@@ -194,7 +199,12 @@ defmodule Eai.Tool.CallSubagent do
 
       _ when max_loops <= 0 ->
         Logger.warning("SBC timeout for subagent #{chat_session_id}")
-        %{status: "timeout", reason: "subagent did not complete in time", chat_session: chat_session_id}
+
+        %{
+          status: "timeout",
+          reason: "subagent did not complete in time",
+          chat_session: chat_session_id
+        }
         |> Eai.Utils.sanitize_value()
         |> Jason.encode!()
 
@@ -205,9 +215,14 @@ defmodule Eai.Tool.CallSubagent do
 
   # ── Async: dispatch + return task_id immediately ─────────────
   defp async_dispatch(chat_session_id, pty_session_id, message, model_opt, prompt_opt) do
-    subagent_task_id = dispatch_subagent(
-      chat_session_id, pty_session_id, message, model_opt, prompt_opt
-    )
+    subagent_task_id =
+      dispatch_subagent(
+        chat_session_id,
+        pty_session_id,
+        message,
+        model_opt,
+        prompt_opt
+      )
 
     %{
       subagent_task_id: subagent_task_id,

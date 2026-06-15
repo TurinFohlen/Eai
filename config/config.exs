@@ -42,7 +42,7 @@ config :eai, :default_model, :deepseek
 # config :eai, :llm, receive_timeout: 180_000
 
 # ── Sandbox ───────────────────────────────────────────────────────────────────
-config :eai, :sandbox, [
+config :eai, :sandbox,
   work_dir_root: "/home/eai_agents",
   script_tmp_prefix: "/tmp/eai_",
   # shared_repo_path:   "/custom/path/to/shared.git",
@@ -52,8 +52,9 @@ config :eai, :sandbox, [
   pty_ready_sleep_ms: 300,
   sentinel_left: "___EAI_START___",
   sentinel_right: "___EAI_END___",
-  debug_pty_output: false,]
-  # default_mounts: ["~/.clawhub/skills", "~/.clawhub/plugins"]
+  debug_pty_output: false
+
+# default_mounts: ["~/.clawhub/skills", "~/.clawhub/plugins"]
 
 # 默认 2 秒
 config :eai, :poll_cooldown_ms, 2_000
@@ -90,6 +91,7 @@ config :eai, :telemetry_events, [
 
 # ── 环境特定配置覆盖 ──────────────────────────────────────────────────────────
 import_config "#{config_env()}.exs"
+
 # ── API Endpoint ─────────────────────────────────────────────────────────────
 # OpenAI-compatible HTTP API. External tools (chatgpt-on-wechat, bots, n8n)
 # can use eai as a drop-in OpenAI replacement.
@@ -99,7 +101,7 @@ import_config "#{config_env()}.exs"
 #   - :auto    (or "auto")          — random free port in 1024–49151
 config :eai, :api,
   enabled: true,
-  port: 4002,
+  port: :auto,
   host: "0.0.0.0"
 
 # ── MCP Servers ──────────────────────────────────────────────────────────────

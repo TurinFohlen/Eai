@@ -24,19 +24,62 @@ end
 # 每个 agent 创建时自动符号链接到其工作目录
 default_mounts = Application.get_env(:eai, :sandbox, [])[:default_mounts] || []
 
-mounts = if extra = System.get_env("EAI_MOUNTS") do
-  default_mounts ++ String.split(extra, ":")
-else
-  default_mounts
-end
+mounts =
+  if extra = System.get_env("EAI_MOUNTS") do
+    default_mounts ++ String.split(extra, ":")
+  else
+    default_mounts
+  end
 
 config :eai, :sandbox, mounts: mounts
 
+# ── MCP Servers: 合并加载 config/mcp_servers/*.exs ──────────────────────────
+# 每个文件返回裸列表 [{:server_id, [...opts]}]，flat_map 合并后写入 app env。
+# 与 Eai.MCP.reread_configs/0 逻辑一致，boot 和热重载路径统一。
+mcp_config_dir = Path.expand("config/mcp_servers", File.cwd!())
+
+if File.dir?(mcp_config_dir) do
+  merged =
+    mcp_config_dir
+    |> Path.join("*.exs")
+    |> Path.wildcard()
+    |> Enum.sort()
+    |> Enum.flat_map(fn file ->
+      {result, _} = Code.eval_file(file)
+      result
+    end)
+
+  config :eai, :mcp_servers, merged
+end
 
 # ── API Port: auto → random free port ───────────────────────────────────────
 # When config :eai, :api, port: is :auto or "auto", pick a random port in
 # 1024–49151, verify it's free, and put the resolved integer back into the
 # application env. lib/ code only ever sees an integer.
+
+# Define helper module inline — runtime.exs is evaluated at app start,
+# so this module lives in the BEAM for the lifetime of the node.
+defmodule Eai.RuntimeHelper do
+  @moduledoc false
+
+  def pick_free_port(0), do: raise("could not find a free port after 10 attempts")
+
+  def pick_free_port(retries) do
+    port = 1024 + :rand.uniform(49151 - 1024)
+
+    case :gen_tcp.listen(0, [{:port, port}, :inet, {:ip, {127, 0, 0, 1}}]) do
+      {:ok, sock} ->
+        :gen_tcp.close(sock)
+        port
+
+      {:error, :eaddrinuse} ->
+        pick_free_port(retries - 1)
+
+      {:error, reason} ->
+        raise "unexpected error probing port #{port}: #{inspect(reason)}"
+    end
+  end
+end
 
 api_config = Application.get_all_env(:eai)[:api] || []
 api_port = api_config[:port]
@@ -45,25 +88,4 @@ if api_port in [:auto, "auto"] do
   port = Eai.RuntimeHelper.pick_free_port(10)
   new_api = Keyword.put(api_config, :port, port)
   Application.put_env(:eai, :api, new_api)
-end
-
-# Define helper module inline — runtime.exs is evaluated at app start,
-# so this module lives in the BEAM for the lifetime of the node.
-defmodule Eai.RuntimeHelper do
-  @moduledoc false
-
-  def pick_free_port(0), do: raise("could not find a free port after 10 attempts")
-  def pick_free_port(retries) do
-    port = 1024 + :rand.uniform(49151 - 1024)
-
-    case :gen_tcp.listen(0, [{:port, port}, :inet, {:ip, {127, 0, 0, 1}}]) do
-      {:ok, sock} ->
-        :gen_tcp.close(sock)
-        port
-      {:error, :eaddrinuse} ->
-        pick_free_port(retries - 1)
-      {:error, reason} ->
-        raise "unexpected error probing port #{port}: #{inspect(reason)}"
-    end
-  end
 end

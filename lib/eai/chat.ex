@@ -83,7 +83,16 @@ defmodule Eai.Chat do
               "EAI Chat [#{chat_session}]. Type '/s' on a new line to send your message. Type '/c' on a new line to cancel"
             )
 
-            read_lines(timeout, model_opt, prompt_opt, chara_card_opt, chat_session, pty_session, [])
+            read_lines(
+              timeout,
+              model_opt,
+              prompt_opt,
+              chara_card_opt,
+              chat_session,
+              pty_session,
+              []
+            )
+
             :ok
         end
 
@@ -207,7 +216,15 @@ defmodule Eai.Chat do
 
   # ── 私有：多行读取循环 ──────────────────────────────────────────
 
-  defp read_lines(timeout, model_opt, prompt_opt, chara_card_opt, chat_session, pty_session, lines) do
+  defp read_lines(
+         timeout,
+         model_opt,
+         prompt_opt,
+         chara_card_opt,
+         chat_session,
+         pty_session,
+         lines
+       ) do
     case IO.gets("> ") do
       :eof ->
         IO.puts("Cancelled.")
@@ -221,30 +238,58 @@ defmodule Eai.Chat do
         cond do
           trimmed == "/s" ->
             message = Enum.join(Enum.reverse(lines), "\n")
-            submit_or_restart(message, timeout, model_opt, prompt_opt, chara_card_opt, chat_session, pty_session)
+
+            submit_or_restart(
+              message,
+              timeout,
+              model_opt,
+              prompt_opt,
+              chara_card_opt,
+              chat_session,
+              pty_session
+            )
 
           trimmed == "/c" ->
             IO.puts("Cancelled.")
 
           true ->
-            read_lines(timeout, model_opt, prompt_opt, chara_card_opt, chat_session, pty_session, [
-              trimmed | lines
-            ])
+            read_lines(
+              timeout,
+              model_opt,
+              prompt_opt,
+              chara_card_opt,
+              chat_session,
+              pty_session,
+              [
+                trimmed | lines
+              ]
+            )
         end
     end
   end
 
-  defp submit_or_restart(message, timeout, model_opt, prompt_opt, chara_card_opt, chat_session, pty_session) do
+  defp submit_or_restart(
+         message,
+         timeout,
+         model_opt,
+         prompt_opt,
+         chara_card_opt,
+         chat_session,
+         pty_session
+       ) do
     if String.trim(message) == "" do
       IO.puts("No message to send. Starting over.")
       read_lines(timeout, model_opt, prompt_opt, chara_card_opt, chat_session, pty_session, [])
     else
       GenServer.cast(
         Eai.Naming.chat(),
-        {:talk_async, message, timeout, model_opt, prompt_opt, chara_card_opt, chat_session, pty_session}
+        {:talk_async, message, timeout, model_opt, prompt_opt, chara_card_opt, chat_session,
+         pty_session}
       )
 
-      IO.puts(~s|Task submitted. Use Eai.Chat.interrupt!("#{chat_session}") to cancel its current task, or Eai.ResultCollector.trigger_timeout_window("#{pty_session}") to stop the loop and nudge the model to wrap up.|)
+      IO.puts(
+        ~s|Task submitted. Use Eai.Chat.interrupt!("#{chat_session}") to cancel its current task, or Eai.ResultCollector.trigger_timeout_window("#{pty_session}") to stop the loop and nudge the model to wrap up.|
+      )
     end
   end
 
@@ -267,7 +312,8 @@ defmodule Eai.Chat do
 
   @impl true
   def handle_call(
-        {:talk, text, timeout, model_opt, prompt_opt, chara_card_opt, chat_session_id, pty_session_id},
+        {:talk, text, timeout, model_opt, prompt_opt, chara_card_opt, chat_session_id,
+         pty_session_id},
         from,
         state
       ) do
@@ -282,7 +328,11 @@ defmodule Eai.Chat do
       :telemetry.execute(
         [:eai, :chat, :session, :start],
         %{system_time: System.system_time()},
-        %{chat_session_id: chat_session_id, pty_session_id: pty_session_id, msg_count: length(new_messages)}
+        %{
+          chat_session_id: chat_session_id,
+          pty_session_id: pty_session_id,
+          msg_count: length(new_messages)
+        }
       )
 
       task = Task.async(fn -> Direct.run(new_messages, pty_session_id, run_opts) end)
@@ -361,6 +411,7 @@ defmodule Eai.Chat do
           %{system_time: System.system_time()},
           %{chat_session_id: name}
         )
+
         {:reply, :ok, %{state | sessions: Map.delete(state.sessions, name)}}
     end
   end
@@ -408,7 +459,8 @@ defmodule Eai.Chat do
 
   @impl true
   def handle_cast(
-        {:talk_async, text, timeout, model_opt, prompt_opt, chara_card_opt, chat_session_id, pty_session_id},
+        {:talk_async, text, timeout, model_opt, prompt_opt, chara_card_opt, chat_session_id,
+         pty_session_id},
         state
       ) do
     session = get_session(state, chat_session_id)

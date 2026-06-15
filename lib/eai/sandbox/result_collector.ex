@@ -163,6 +163,7 @@ defmodule Eai.ResultCollector do
   def trigger_timeout_window(pty_session_id, depth \\ 1) do
     Cache.put(window_key(pty_session_id), depth)
     Logger.info("Timeout window triggered for #{pty_session_id}, depth: #{depth} (cache)")
+
     :telemetry.execute(
       [:eai, :result_collector, :timeout, :triggered],
       %{system_time: System.system_time()},
@@ -180,11 +181,13 @@ defmodule Eai.ResultCollector do
       depth when is_integer(depth) and depth > 0 ->
         Cache.put(key, depth - 1)
         Logger.info("Timeout window consumed for #{pty_session_id}, remaining: #{depth - 1}")
+
         :telemetry.execute(
           [:eai, :result_collector, :timeout, :consumed],
           %{system_time: System.system_time()},
           %{pty_session_id: pty_session_id, remaining: depth - 1}
         )
+
         "The timeout you set has been reached. Please safely stop what you're doing and reply now."
 
       _ ->
@@ -199,6 +202,7 @@ defmodule Eai.ResultCollector do
   def set_interrupt_flag(pty_session_id) do
     Cache.put(interrupt_key(pty_session_id), true)
     Logger.info("Interrupt flag set for #{pty_session_id}")
+
     :telemetry.execute(
       [:eai, :result_collector, :interrupt, :set],
       %{system_time: System.system_time()},

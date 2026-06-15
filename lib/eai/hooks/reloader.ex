@@ -68,6 +68,7 @@ defmodule Eai.Hub.Reloader do
           dir: hooks_dir,
           reason: inspect(reason)
         )
+
         {:error, reason}
     end
   end
@@ -96,6 +97,7 @@ defmodule Eai.Hub.Reloader do
           file: filename,
           error: Exception.message(e)
         )
+
         []
     catch
       kind, reason ->
@@ -103,6 +105,7 @@ defmodule Eai.Hub.Reloader do
           file: filename,
           error: inspect({kind, reason})
         )
+
         []
     end
   end

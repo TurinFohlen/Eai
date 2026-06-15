@@ -6,6 +6,7 @@ defmodule Eai.Adapter.OpenAI do
   @impl true
   def to_request_body(messages, model, system_prompt, tools, opts) do
     effort = Keyword.get(opts, :reasoning_effort)
+
     :telemetry.execute(
       [:eai, :adapter, :openai, :to_request_body],
       %{msgs: length(messages), tools: length(tools)},
@@ -43,6 +44,7 @@ defmodule Eai.Adapter.OpenAI do
       %{},
       %{model: get_in(msg, ["role"]) || :assistant, has_reasoning: !!msg["reasoning_content"]}
     )
+
     content = msg["content"]
     reasoning = msg["reasoning_content"]
     tool_calls = msg["tool_calls"]
@@ -86,6 +88,7 @@ defmodule Eai.Adapter.OpenAI do
       %{count: length(raw_messages)},
       %{}
     )
+
     Enum.flat_map(raw_messages, fn
       # skip system messages
       %{"role" => "system"} ->

@@ -41,7 +41,6 @@ defmodule Eai.API.Router do
 
     with {:ok, model} <- extract_model(body),
          {:ok, messages} <- extract_messages(body) do
-
       # Extract the last user message as content
       user_content =
         messages
@@ -53,7 +52,9 @@ defmodule Eai.API.Router do
         end
 
       if is_nil(user_content) do
-        send_json(conn, 400, %{error: %{message: "No user message found", type: "invalid_request_error"}})
+        send_json(conn, 400, %{
+          error: %{message: "No user message found", type: "invalid_request_error"}
+        })
       else
         # Extract optional params
         opts = [content: user_content, model: model, mod: :function]
@@ -86,7 +87,9 @@ defmodule Eai.API.Router do
             send_json(conn, 200, response)
 
           {:error, :busy} ->
-            send_json(conn, 429, %{error: %{message: "Session busy, try again later", type: "server_error"}})
+            send_json(conn, 429, %{
+              error: %{message: "Session busy, try again later", type: "server_error"}
+            })
 
           {:error, reason} ->
             send_json(conn, 500, %{error: %{message: inspect(reason), type: "server_error"}})
@@ -94,7 +97,9 @@ defmodule Eai.API.Router do
       end
     else
       {:error, field, msg} ->
-        send_json(conn, 400, %{error: %{message: "#{field}: #{msg}", type: "invalid_request_error"}})
+        send_json(conn, 400, %{
+          error: %{message: "#{field}: #{msg}", type: "invalid_request_error"}
+        })
     end
   end
 
@@ -142,11 +147,12 @@ defmodule Eai.API.Router do
 
   defp extract_model(%{"model" => model}) when is_binary(model) do
     # Accept both atom-style ("deepseek") and string-style ("deepseek-chat")
-    atom_model = try do
-      String.to_existing_atom(model)
-    rescue
-      ArgumentError -> model
-    end
+    atom_model =
+      try do
+        String.to_existing_atom(model)
+      rescue
+        ArgumentError -> model
+      end
 
     available = Eai.Models.names()
 
@@ -155,7 +161,10 @@ defmodule Eai.API.Router do
     else
       # Try string match
       match = Enum.find(available, &(to_string(&1) == model))
-      if match, do: {:ok, match}, else: {:error, "model", "unknown model '#{model}'. Available: #{inspect(available)}"}
+
+      if match,
+        do: {:ok, match},
+        else: {:error, "model", "unknown model '#{model}'. Available: #{inspect(available)}"}
     end
   end
 
@@ -169,11 +178,12 @@ defmodule Eai.API.Router do
   defp extract_messages(_), do: {:error, "messages", "required field 'messages' must be an array"}
 
   defp maybe_add_prompt(opts, %{"prompt" => p}) when is_binary(p) do
-    atom_p = try do
-      String.to_existing_atom(p)
-    rescue
-      ArgumentError -> p
-    end
+    atom_p =
+      try do
+        String.to_existing_atom(p)
+      rescue
+        ArgumentError -> p
+      end
 
     available = Eai.Prompts.names()
     if atom_p in available, do: Keyword.put(opts, :prompt, atom_p), else: opts

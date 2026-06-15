@@ -12,4 +12,3 @@ config :eai, :model_xingchen_glm_5_1,
   api_key_env: "XINGCHEN_API_KEY",
   # 摇号池排队，留足 10 分钟
   receive_timeout: 600_000
-

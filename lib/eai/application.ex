@@ -8,11 +8,12 @@ defmodule Eai.Application do
 
     children =
       if Application.get_env(:eai, :start_application, true) do
-        IO.puts("╔════════════════════════════════════════╗")
-        IO.puts("║  🤖 EAI — AI Agent Framework          ║")
-        IO.puts("║  Type Eai.help()  for docs            ║")
-        IO.puts("║  Type Eai.Chat.talk()  to chat        ║")
-        IO.puts("╚════════════════════════════════════════╝\n")
+        IO.puts("╔══════════════════════════════════════════════════╗")
+        IO.puts("║  🤖 EAI  v0.1 — AI Agent Framework              ║")
+        IO.puts("║  Type Eai.help() for full documentation.        ║")
+        IO.puts("║  Type Eai.Chat.talk() to chat.                  ║")
+        IO.puts("╚══════════════════════════════════════════════════╝\n")
+
         api_children =
           if Application.get_env(:eai, :api, [])[:enabled] != false do
             [api_child_spec()]
@@ -49,7 +50,10 @@ defmodule Eai.Application do
     :timer.sleep(500)
     Eai.Hub.reload!()
     count = length(:persistent_term.get(:eai_hooks, []))
-    if count > 0, do: IO.puts("🪝  #{count} hook(s) loaded from config/hooks/\n")
+
+    if count > 0 do
+      IO.puts("🪝  #{count} hook(s) loaded from config/hooks/")
+    end
   end
 
   defp api_child_spec do

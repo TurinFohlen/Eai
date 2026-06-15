@@ -335,6 +335,7 @@ defmodule Eai.Sandbox.PTYPool do
         # Link user mounts (skills, plugins, etc.)
         sandbox = Application.fetch_env!(:eai, :sandbox)
         mounts = Keyword.get(sandbox, :mounts, [])
+
         Enum.each(mounts, fn mount_src ->
           expanded = Path.expand(mount_src)
           mount_name = Path.basename(expanded)
@@ -427,6 +428,7 @@ defmodule Eai.Sandbox.PTYPool do
         )
     end
   end
+
   defp maybe_link_mount(pty_session_id, mount_src, mount_link) do
     cond do
       File.exists?(mount_link) ->
@@ -455,5 +457,4 @@ defmodule Eai.Sandbox.PTYPool do
         )
     end
   end
-
 end

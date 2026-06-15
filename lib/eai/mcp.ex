@@ -5,8 +5,9 @@ defmodule Eai.MCP do
   On boot:
   1. Reads `config :eai, :mcp_servers` (from config/mcp_servers/*.exs)
   2. Starts an `Anubis.Client` process for each server
-  3. Calls `list_tools()` to discover available tools
-  4. Builds runtime `Eai.Tool` modules and merges into the LLM tool registry
+  3. Waits for Anubis handshake to complete (polling server_capabilities)
+  4. Calls `list_tools()` to discover available tools
+  5. Builds runtime `Eai.Tool` modules and merges into the LLM tool registry
 
   Hot-reload:
       Eai.MCP.reload!()
@@ -36,16 +37,9 @@ defmodule Eai.MCP do
     else
       started = start_all(servers)
       ids = MapSet.new(Enum.map(started, &elem(&1, 0)))
-      {:ok, %{initial_state() | servers: started, ids: ids}, {:continue, :discover}}
+      Process.send_after(self(), :do_discover, 500)
+      {:ok, %{initial_state() | servers: started, ids: ids}}
     end
-  end
-
-  @impl true
-  def handle_continue(:discover, state) do
-    {schemas, dispatch, tool_counts} = discover_all(MapSet.to_list(state.ids))
-    merge(schemas, dispatch)
-    Logger.info("MCP: ready — #{MapSet.size(state.ids)} server(s)")
-    {:noreply, %{state | tool_counts: tool_counts}}
   end
 
   # ── public API ───────────────────────────────────────────────────────
@@ -76,6 +70,14 @@ defmodule Eai.MCP do
   end
 
   # ── callbacks ────────────────────────────────────────────────────────
+
+  @impl true
+  def handle_info(:do_discover, state) do
+    {schemas, dispatch, tool_counts} = discover_all(MapSet.to_list(state.ids))
+    merge(schemas, dispatch)
+    Logger.info("MCP: ready — #{MapSet.size(state.ids)} server(s)")
+    {:noreply, %{state | tool_counts: tool_counts}}
+  end
 
   @impl true
   def handle_call(:refresh, _from, state) do
@@ -109,23 +111,19 @@ defmodule Eai.MCP do
     removed = MapSet.difference(old_ids, new_ids)
     added = MapSet.difference(new_ids, old_ids)
 
-    # Stop removed
     Enum.each(removed, fn id ->
       Logger.info("MCP: stopping removed server #{id}")
       stop_server(id)
     end)
 
-    # Validate + start added
     new_entries =
       new_servers
       |> Enum.filter(fn {id, _opts} -> MapSet.member?(added, id) end)
       |> Enum.reduce([], fn {id, opts}, acc -> try_start({id, opts}, acc, "skipping") end)
 
-    # Keep existing that are still present
     kept = Enum.filter(state.servers, fn {id, _} -> MapSet.member?(new_ids, id) end)
     all_servers = kept ++ new_entries
 
-    # Refresh tools
     {schemas, dispatch, tool_counts} = discover_all(MapSet.to_list(new_ids))
     merge(schemas, dispatch)
 
@@ -145,19 +143,18 @@ defmodule Eai.MCP do
   defp initial_state, do: %{servers: [], ids: MapSet.new(), tool_counts: %{}}
 
   defp reread_configs do
-    config_dir = Path.join(:code.priv_dir(:eai) |> Path.dirname(), @mcp_config_dir)
+    config_dir = Path.expand(@mcp_config_dir, File.cwd!())
 
     if File.dir?(config_dir) do
       config_dir
       |> Path.join("*.exs")
       |> Path.wildcard()
       |> Enum.sort()
-      |> Enum.each(fn file ->
+      |> Enum.flat_map(fn file ->
         Logger.debug("MCP: re-reading #{Path.basename(file)}")
-        Code.eval_file(file)
+        {result, _} = Code.eval_file(file)
+        result
       end)
-
-      Application.get_env(:eai, :mcp_servers, [])
     else
       Logger.warning("MCP: config dir not found: #{config_dir}")
       []
@@ -168,17 +165,13 @@ defmodule Eai.MCP do
     sup_name = Module.concat(id, "Supervisor")
 
     case Process.whereis(sup_name) do
-      nil ->
-        :ok
-
+      nil -> :ok
       pid ->
-        # Try DynamicSupervisor first, fall back to Supervisor.stop
         try do
           DynamicSupervisor.terminate_child(Eai.MCP.DynamicSupervisor, pid)
         rescue
           _ -> Supervisor.stop(sup_name, :normal, 5_000)
         end
-
         Logger.info("MCP: #{id} stopped")
     end
   rescue
@@ -186,7 +179,6 @@ defmodule Eai.MCP do
   end
 
   defp server_alive?(id) do
-    # Check if the Anubis.Client process is alive
     case Process.whereis(id) do
       nil -> false
       pid -> Process.alive?(pid)
@@ -200,11 +192,8 @@ defmodule Eai.MCP do
 
   defp validate_server_config({id, opts}) when is_atom(id) and is_list(opts) do
     case Keyword.fetch(opts, :transport) do
-      {:ok, transport} ->
-        validate_transport(transport)
-
-      :error ->
-        {:error, "missing :transport key in server config"}
+      {:ok, transport} -> validate_transport(transport)
+      :error -> {:error, "missing :transport key in server config"}
     end
   end
 
@@ -280,36 +269,79 @@ defmodule Eai.MCP do
   end
 
   defp discover_all(server_ids) do
-    Enum.reduce(server_ids, {[], %{}, %{}}, &discover_server_tools/2)
+    # 等 Anubis 完成内部握手（最多 10 秒，每 200ms 检查一次）
+    wait_for_handshake(server_ids, 150)
+
+    tools_by_server =
+      Enum.reduce(server_ids, %{}, fn id, acc ->
+        case Anubis.Client.list_tools(id) do
+          {:ok, %{result: %{"tools" => tools}}} ->
+            Logger.info("MCP: #{id} → #{length(tools)} tool(s)")
+            Map.put(acc, id, tools)
+
+          {:error, reason} ->
+            Logger.error("MCP: #{id} list_tools failed — #{inspect(reason)}")
+            Map.put(acc, id, [])
+        end
+      end)
+
+    counts = Map.new(tools_by_server, fn {id, tools} -> {id, length(tools)} end)
+    {schemas, dispatch} = build_io_bridge_entry(tools_by_server)
+    {schemas, dispatch, counts}
   end
 
-  defp discover_server_tools(id, {schemas, dispatch, counts}) do
-    case Anubis.Client.list_tools(id) do
-      {:ok, response} ->
-        tools = response[:tools] || []
-        Logger.info("MCP: #{id} → #{length(tools)} tool(s)")
+  defp wait_for_handshake(_server_ids, 0), do: :ok
 
-        {new_schemas, new_dispatch} = build_tool_entries(tools, id)
-        {schemas ++ new_schemas, Map.merge(dispatch, new_dispatch), Map.put(counts, id, length(tools))}
+  defp wait_for_handshake(server_ids, retries) do
+    all_ready? = Enum.all?(server_ids, fn id ->
+      case Anubis.Client.get_server_capabilities(id) do
+        %{} = caps when caps != %{} -> true
+        _ -> false
+      end
+    end)
 
-      {:error, reason} ->
-        Logger.error("MCP: #{id} list_tools failed — #{inspect(reason)}")
-        {schemas, dispatch, Map.put(counts, id, 0)}
+    if all_ready? do
+      :ok
+    else
+      Process.sleep(200)
+      wait_for_handshake(server_ids, retries - 1)
     end
   end
 
-  defp build_tool_entries(tools, id) do
-    Enum.reduce(tools, {[], %{}}, fn tool, {s_acc, d_acc} ->
-      name = tool["name"]
-      desc = tool["description"] || ""
-      input_schema = tool["inputSchema"] || %{}
+  # Build the single `mcp_io` bridge entry plus a per-server catalog stored
+  # in :persistent_term under :eai_mcp_catalog. The catalog is what
+  # Eai.MCP.IOBridge consults at execute-time to validate the model's
+  # (server, tool) pair before calling Anubis.
+  defp build_io_bridge_entry(tools_by_server) do
+    catalog = build_catalog_map(tools_by_server)
+    schema = Adapter.build_io_bridge_schema()
 
-      {mod, schema} = Adapter.build_tool_module(id, name, input_schema, desc)
-      tool_name = "#{id}:#{name}"
-      {[schema | s_acc], Map.put(d_acc, tool_name, mod)}
+    :persistent_term.put(:eai_mcp_catalog, catalog)
+    {[schema], %{"mcp_io" => Eai.MCP.IOBridge}}
+  end
+
+  defp build_catalog_map(tools_by_server) do
+    Map.new(tools_by_server, fn {server, tools} ->
+      tool_map =
+        Map.new(tools, fn tool ->
+          name = tool["name"]
+          desc = tool["description"] || ""
+          schema = tool["inputSchema"] || %{}
+
+          {name,
+           %{
+             description: desc,
+             input_schema: schema
+           }}
+        end)
+
+      {server, tool_map}
     end)
   end
 
+  # Replace (not append) the mcp_io entry in the tool registry. Without
+  # this guard, repeated Eai.MCP.reload!/0 calls would stack up multiple
+  # mcp_io entries — and a stale description would mislead the model.
   defp merge(mcp_schemas, mcp_dispatch) do
     existing =
       case :persistent_term.get(:eai_llm_tools, :not_found) do
@@ -317,11 +349,17 @@ defmodule Eai.MCP do
         reg -> reg
       end
 
+    cleaned_schemas = Enum.reject(existing.schemas, &mcp_io_schema?/1)
+    cleaned_dispatch = Map.drop(existing.dispatch, Map.keys(mcp_dispatch))
+
     merged = %{
-      schemas: existing.schemas ++ mcp_schemas,
-      dispatch: Map.merge(existing.dispatch, mcp_dispatch)
+      schemas: cleaned_schemas ++ mcp_schemas,
+      dispatch: Map.merge(cleaned_dispatch, mcp_dispatch)
     }
 
     :persistent_term.put(:eai_llm_tools, merged)
   end
+
+  defp mcp_io_schema?(%{function: %{name: "mcp_io"}}), do: true
+  defp mcp_io_schema?(_), do: false
 end
