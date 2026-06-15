@@ -25,7 +25,6 @@ defmodule Eai.Application do
           {Phoenix.PubSub, name: Eai.Naming.pubsub()},
           Eai.Cache.Cache,
           Eai.Sandbox.PTYPool,
-          Eai.MCP,
           {Eai.Chat, []}
         ] ++ api_children
       else
@@ -64,8 +63,6 @@ defmodule Eai.Application do
     IO.puts("🌐 Eai API listening on http://#{host}:#{port}")
     IO.puts("   POST /v1/chat/completions  — OpenAI-compatible chat")
     IO.puts("   GET  /v1/models            — list models")
-    IO.puts("   GET  /v1/tools             — list MCP tools")
-    IO.puts("   GET  /v1/mcp/status        — MCP server status")
     IO.puts("   GET  /health               — health check")
 
     bandit_opts = [scheme: :http, plug: Eai.API.Router, port: port]

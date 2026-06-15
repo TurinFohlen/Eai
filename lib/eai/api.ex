@@ -12,8 +12,6 @@ defmodule Eai.API do
   | GET    | /health                   | Health check + version             |
   | GET    | /v1/models                | List available LLM models          |
   | POST   | /v1/chat/completions      | Chat completions (OpenAI format)   |
-  | GET    | /v1/tools                 | List MCP tools                     |
-  | GET    | /v1/mcp/status            | MCP server status                  |
 
   ## Configuration
 
@@ -39,8 +37,6 @@ defmodule Eai.API do
     IO.puts("🌐 Eai API listening on http://#{host}:#{port}")
     IO.puts("   POST /v1/chat/completions  — OpenAI-compatible chat")
     IO.puts("   GET  /v1/models            — list models")
-    IO.puts("   GET  /v1/tools             — list MCP tools")
-    IO.puts("   GET  /v1/mcp/status        — MCP server status")
     IO.puts("   GET  /health               — health check")
 
     Bandit.start_link(

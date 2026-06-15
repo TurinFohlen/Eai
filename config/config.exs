@@ -60,7 +60,8 @@ config :eai, :sandbox,
 config :eai, :poll_cooldown_ms, 2_000
 
 # ── Telemetry ─────────────────────────────────────────────────────────────────
-config :eai, :telemetry_events, [
+config :eai, :telemetry_events, 
+[
   {[:eai, :session, :spawn], "PTY session spawned"},
   {[:eai, :session, :reset], "PTY session force-reset"},
   {[:eai, :task, :start], "Task submitted"},
@@ -81,11 +82,7 @@ config :eai, :telemetry_events, [
   {[:eai, :adapter, :openai, :to_request_body], "OpenAI adapter to_request_body"},
   {[:eai, :adapter, :openai, :from_response], "OpenAI adapter from_response"},
   {[:eai, :adapter, :openai, :from_messages], "OpenAI adapter from_messages"},
-  {[:eai, :adapter, :mcp, :do_execute, :start], "MCP adapter do_execute start"},
-  {[:eai, :adapter, :mcp, :do_execute, :stop], "MCP adapter do_execute stop"},
-  {[:eai, :adapter, :mcp, :do_execute, :error], "MCP adapter do_execute error"}
 ]
-
 # ── System Prompt ─────────────────────────────────────────────────────────────
 # prompts loaded via config/prompts/
 
@@ -103,8 +100,3 @@ config :eai, :api,
   enabled: true,
   port: :auto,
   host: "0.0.0.0"
-
-# ── MCP Servers ──────────────────────────────────────────────────────────────
-# Each server gets its own file under config/mcp_servers/*.exs
-# To enable a server, uncomment its file (or add a new one).
-# Hot-reload at runtime: Eai.MCP.reload!()

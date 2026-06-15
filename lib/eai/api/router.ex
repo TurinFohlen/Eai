@@ -13,7 +13,6 @@ defmodule Eai.API.Router do
     send_json(conn, 200, %{
       status: "ok",
       version: "0.1.13",
-      mcp_servers: length(Eai.MCP.status()),
       models: Eai.Models.names()
     })
   end
@@ -122,13 +121,6 @@ defmodule Eai.API.Router do
       end
 
     send_json(conn, 200, %{object: "list", data: tools, total: length(tools)})
-  end
-
-  # ── GET /v1/mcp/status ─────────────────────────────────────────────
-
-  get "/v1/mcp/status" do
-    status = Eai.MCP.status()
-    send_json(conn, 200, %{servers: status})
   end
 
   # ── Fallback ────────────────────────────────────────────────────────
