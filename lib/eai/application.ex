@@ -8,9 +8,11 @@ defmodule Eai.Application do
 
     children =
       if Application.get_env(:eai, :start_application, true) do
-        IO.puts("ℹ️   EAI started.\n")
-        IO.puts("ℹ️   Type Eai.help() for full documentation.\n")
-        IO.puts("ℹ️   Type Eai.Chat.talk() to chat.\n")
+        IO.puts("╔════════════════════════════════════════╗")
+        IO.puts("║  🤖 EAI — AI Agent Framework          ║")
+        IO.puts("║  Type Eai.help()  for docs            ║")
+        IO.puts("║  Type Eai.Chat.talk()  to chat        ║")
+        IO.puts("╚════════════════════════════════════════╝\n")
         api_children =
           if Application.get_env(:eai, :api, [])[:enabled] != false do
             [api_child_spec()]
@@ -37,13 +39,17 @@ defmodule Eai.Application do
     # Reloader tries to compile hook files that may reference them.
     # Task.start (not Task.async) — fire-and-forget, no supervision needed.
     if Application.get_env(:eai, :start_application, true) do
-      Task.start(fn ->
-        :timer.sleep(500)
-        Eai.Hub.reload!()
-      end)
+      Task.start(&load_hooks/0)
     end
 
     result
+  end
+
+  defp load_hooks do
+    :timer.sleep(500)
+    Eai.Hub.reload!()
+    count = length(:persistent_term.get(:eai_hooks, []))
+    if count > 0, do: IO.puts("🪝  #{count} hook(s) loaded from config/hooks/\n")
   end
 
   defp api_child_spec do

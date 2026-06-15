@@ -17,8 +17,8 @@ defmodule Eai do
     Eai.Chat.get_history()                    → 当前会话消息列表
     Eai.Chat.get_history("session")           → 指定会话消息列表
     Eai.Chat.list_chat_sessions()             → %{session_id => %{message_count, status}}
-    Eai.Chat.interrupt!()                     → 取消正在跑的 PTY 任务（Ctrl+C + 右哨兵，仅在任务停等 PTY 输出时生效）
-    Eai.Chat.interrupt!("session")            → 取消指定会话的 PTY 任务
+    Eai.Chat.interrupt!()                     → 设置中断标记，下次 get_task_result 轮询时注入 Ctrl+C
+    Eai.Chat.interrupt!("session")            → 中断指定会话
 
     ## 让模型"主动停手"（中断 loop）
     当模型陷入多余的工具循环（反复轮询、栈大量小命令）时，可用 timeout 窗口：
@@ -26,7 +26,7 @@ defmodule Eai do
       → 下一轮 LLM 请求会看到一条 user 提示：“The timeout you set has been reached.
         Please safely stop what you're doing and reply now.”
       → depth 是连续提示的轮数（1 = 提示一次；2 = 连续两轮都提示）。
-    Eai.ResultCollector.check_timeout_window("pty_session_id")  → 内部使用，一般无需手动调
+    Eai.ResultCollector.check_timeout_window("pty_session_id")  → 内部使用
     Eai.Chat.close_chat_session("session")    → 关闭会话
     Eai.Chat.export_history("path.gz")        → {:ok, path} | {:error, reason}
     Eai.Chat.export_history("path.gz", "session")
@@ -79,6 +79,18 @@ defmodule Eai do
     ## 高级：LLM 直接调用
     Eai.LLM.Direct.run(messages, pty_session_id, opts)
       opts: %{model: :gpt4o, system_prompt: :coder, chat_session_id: "id", ...}
+
+    ## Hook 管理
+    Eai.Hub.reload!()                       → :ok (hot-reload hooks from config/hooks/)
+    Eai.Hub.Loader.print_hooks()            → 打印当前注册的 hooks 及优先级
+    Eai.Hub.Loader.list_files()             → {:ok, ["01_example.exs", ...]}
+    Eai.Hub.Loader.current_hooks()          → [{ModuleName, priority}, ...]
+    :persistent_term.erase(:eai_hooks); Eai.Hub.reload!()  → 强制全量重载
+
+    ## 自动快照回滚（内置 hook）
+    config/hooks/03_auto_snapshot.exs (priority=5)
+      每次 LLM 请求前自动快照会话历史；请求失败时自动回滚到干净状态。
+      防止损坏的消息序列（如重复 tool_call_id）永久污染会话。
 
     ## 调试环境变量
     EAI_DEBUG_PTY=1           原始 PTY 输出
