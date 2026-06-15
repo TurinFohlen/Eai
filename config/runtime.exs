@@ -19,3 +19,16 @@ if priv = System.get_env("EAI_PRIV_SRC") do
 else
   config :eai, :sandbox, priv_src: Path.expand("priv", File.cwd!())
 end
+
+# ── Mounts ────────────────────────────────────────────────────
+# 每个 agent 创建时自动符号链接到其工作目录
+default_mounts = Application.get_env(:eai, :sandbox, [])[:default_mounts] || []
+
+mounts = if extra = System.get_env("EAI_MOUNTS") do
+  default_mounts ++ String.split(extra, ":")
+else
+  default_mounts
+end
+
+config :eai, :sandbox, mounts: mounts
+

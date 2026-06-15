@@ -332,6 +332,16 @@ defmodule Eai.Sandbox.PTYPool do
         priv_link = Path.join(work_dir, "priv")
         maybe_link_priv(pty_session_id, priv_src, priv_link)
 
+        # Link user mounts (skills, plugins, etc.)
+        sandbox = Application.fetch_env!(:eai, :sandbox)
+        mounts = Keyword.get(sandbox, :mounts, [])
+        Enum.each(mounts, fn mount_src ->
+          expanded = Path.expand(mount_src)
+          mount_name = Path.basename(expanded)
+          mount_link = Path.join(work_dir, mount_name)
+          maybe_link_mount(pty_session_id, expanded, mount_link)
+        end)
+
         shell = System.find_executable("bash") || "/bin/sh"
         cols = sandbox_cfg(:pty_cols)
         rows = sandbox_cfg(:pty_rows)
@@ -417,4 +427,33 @@ defmodule Eai.Sandbox.PTYPool do
         )
     end
   end
+  defp maybe_link_mount(pty_session_id, mount_src, mount_link) do
+    cond do
+      File.exists?(mount_link) ->
+        :ok
+
+      File.exists?(mount_src) ->
+        case File.ln_s(mount_src, mount_link) do
+          :ok ->
+            Logger.info("PTYPool mount symlink created",
+              pty_session_id: pty_session_id,
+              src: mount_src,
+              link: mount_link
+            )
+
+          {:error, reason} ->
+            Logger.warning("PTYPool mount symlink failed",
+              pty_session_id: pty_session_id,
+              reason: reason
+            )
+        end
+
+      true ->
+        Logger.info("PTYPool mount src not found, skip",
+          pty_session_id: pty_session_id,
+          src: mount_src
+        )
+    end
+  end
+
 end

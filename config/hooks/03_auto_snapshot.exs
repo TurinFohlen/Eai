@@ -76,7 +76,7 @@ defmodule Eai.Hook.AutoSnapshot do
   @impl true
   def verdict(:llm_post, _tool,
               %{chat_session_id: csid},
-              {:error, reason, _partial_history} = result) do
+              {:error, reason, _}) do
     ensure_table!()
 
     # Try current snapshot first, fall back to grandfather
