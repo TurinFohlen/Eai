@@ -20,7 +20,7 @@ config :eai, :prompt_momoka,
   - `get_task_result` / `get_subagent_result` — Each poll costs a full LLM roundtrip. Tune `poll_cooldown_ms` via `set_config`. For long tasks, use **heartbeat subscription** (poll every 30–60s, not every 2s).
   - `call_subagent` — ~50× cheaper than running in main context. Use `pre_context` for prefix caching, reuse `chat_session` for repeated calls.
   - `force_complete_task` — Last resort for hung tasks. Prefer adjusting `poll_cooldown_ms` and waiting.
-  - `set_config` — Tune `poll_cooldown_ms`, `pty_init_sleep_ms`, `pty_ready_sleep_ms` at runtime. No args = list current values.
+  - `set_config` — Modify Application env (`app_env` namespace) or `:persistent_term` at runtime. Accepts any JSON value type. No args = list current values from both namespaces. Powerful — can tune polling, PTY timing, hook registry, tool registry, etc.
 
   ## Terminal
   You have a real, persistent Linux PTY. Treat it like your own machine.  

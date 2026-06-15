@@ -1,15 +1,26 @@
 defmodule Eai.Tool.SetConfig do
-  @moduledoc "运行时动态修改 eai 配置参数，立即对所有进程生效。"
+  @moduledoc """
+  Runtime configuration — modify Application env and :persistent_term at runtime.
+  Changes take effect immediately for all processes. No restart needed.
+
+  ## Namespaces
+
+  | Namespace | Backend | Key type | Value type |
+  |-----------|---------|----------|------------|
+  | `app_env` | `Application.put_env(:eai, key, value)` | string (atomized) | any JSON |
+  | `persistent_term` | `:persistent_term.put(key, value)` | string (atomized) | any JSON |
+
+  ## Safety
+
+  This is a **powerful** tool — it mutates live VM state. The hook pipeline
+  (config/hooks/*.exs) can block dangerous writes. Prefer `persistent_term` for
+  temporary overrides (reboot-safe — lost on restart). Use `app_env` for
+  persistent configuration changes.
+
+  Call with no arguments to list current values from both namespaces.
+  """
 
   @behaviour Eai.Tool
-
-  # 允许修改的参数白名单及其说明
-  @allowed %{
-    "poll_cooldown_ms" =>
-      "轮询冷却时间（ms）。影响 get_task_result / get_subagent_result 的 sleep 间隔。默认 2000。",
-    "pty_init_sleep_ms" => "PTY 启动后等待 shell 就绪的时间（ms）。任务卡住时可适当增大。默认 200。",
-    "pty_ready_sleep_ms" => "PTY 发送命令后等待首字节输出的时间（ms）。默认 300。"
-  }
 
   @impl true
   def schema do
@@ -18,37 +29,40 @@ defmodule Eai.Tool.SetConfig do
       function: %{
         name: "set_config",
         description: """
-        Dynamically update a runtime configuration parameter. Changes take effect
-        immediately for all processes — no restart needed.
+        Dynamically update runtime configuration in Application env or :persistent_term.
+        Changes take effect immediately for all processes — no restart needed.
 
-        **When to use each key:**
+        **Namespaces:**
+        - `app_env` — Application.put_env(:eai, key, value). Survives restarts.
+        - `persistent_term` — :persistent_term.put(key, value). Lost on restart.
 
-        - `poll_cooldown_ms` — Controls how long `get_task_result` and `get_subagent_result`
-          sleep between polls. High values add artificial delay to every tool-result round-trip.
-          Lower to speed up execute_script → get_task_result cycles (recommended floor: 500 ms).
-          Raise when the LLM is polling too aggressively and burning API credits.
+        **When to use each key (app_env):**
+        - `poll_cooldown_ms` — Controls how long get_task_result / get_subagent_result
+          sleep between polls. Raise to reduce polling cost, lower to speed up (min 500).
+        - `pty_init_sleep_ms` — Wait after PTY spawn before sending commands (default 200).
+        - `pty_ready_sleep_ms` — Wait after command for first byte of output (default 300).
 
-        - `pty_init_sleep_ms` — Wait after spawning a PTY shell before sending commands.
-          If the shell needs more time to source .bashrc or load env vars, increase this.
-          Default 200 ms, rarely needs adjustment.
+        **When to use persistent_term:**
+        - `eai_hooks` — The hook pipeline registry. Erase and reload!() to force-reset.
+        - `eai_llm_tools` — The tool registry (schemas + dispatch map).
 
-        - `pty_ready_sleep_ms` — Wait after sending a command for the first byte of output.
-          Increase if commands produce no output (shell still loading); decrease if terminal
-          feels laggy (default 300 ms).
-
-        Call with no arguments (or key = "list") to see current values.
+        Call with no arguments (or key = "list") to see current values from both namespaces.
         """,
         parameters: %{
           type: "object",
           properties: %{
-            key: %{
+            namespace: %{
               type: "string",
               description:
-                "Parameter name. One of: #{Map.keys(@allowed) |> Enum.join(", ")}. Omit to list current values."
+                "Which namespace: 'app_env' or 'persistent_term'. Required when setting or reading a single key."
+            },
+            key: %{
+              type: "string",
+              description: "Config key name (string, will be atomized). Omit to list all."
             },
             value: %{
-              type: "integer",
-              description: "New value (milliseconds, integer)."
+              description:
+                "New value. Any JSON type: number, string, boolean, object, array. Omit to read current value."
             }
           },
           required: []
@@ -60,51 +74,142 @@ defmodule Eai.Tool.SetConfig do
   @impl true
   def execute(args, _pty_session_id, _chat_session_id) do
     key = Map.get(args, "key")
+    namespace = Map.get(args, "namespace")
 
     cond do
       is_nil(key) or key == "list" ->
-        current_values()
-        |> Jason.encode!()
+        list_all() |> Jason.encode!()
 
-      not Map.has_key?(@allowed, key) ->
+      is_nil(namespace) or namespace not in ["app_env", "persistent_term"] ->
         %{
-          error: "unknown key: #{key}",
-          allowed: Map.keys(@allowed)
+          error: "namespace is required and must be 'app_env' or 'persistent_term'",
+          got: namespace
         }
         |> Jason.encode!()
 
-      not is_integer(Map.get(args, "value")) ->
-        %{error: "value must be an integer (ms)"}
-        |> Jason.encode!()
+      not Map.has_key?(args, "value") ->
+        read_one(namespace, key) |> Jason.encode!()
 
       true ->
-        value = Map.get(args, "value")
-        apply_config(key, value)
-
-        %{ok: true, key: key, value: value}
-        |> Jason.encode!()
+        set_one(namespace, key, args["value"]) |> Jason.encode!()
     end
   end
 
-  # ── Private ─────────────────────────────────────────────────────
+  # ── List all ────────────────────────────────────────────────────
 
-  defp current_values do
-    sandbox = Application.get_env(:eai, :sandbox, [])
-
+  defp list_all do
     %{
-      poll_cooldown_ms: Application.get_env(:eai, :poll_cooldown_ms),
-      pty_init_sleep_ms: Keyword.get(sandbox, :pty_init_sleep_ms),
-      pty_ready_sleep_ms: Keyword.get(sandbox, :pty_ready_sleep_ms)
+      app_env: list_app_env(),
+      persistent_term: list_persistent_term()
     }
   end
 
-  defp apply_config("poll_cooldown_ms", value) do
-    Application.put_env(:eai, :poll_cooldown_ms, value)
+  defp list_app_env do
+    app_env = Application.get_all_env(:eai)
+
+    interesting = ~w(poll_cooldown_ms sandbox api default_model)a
+
+    interesting
+    |> Enum.reduce(%{}, fn k, acc ->
+      case Map.fetch(app_env, k) do
+        {:ok, v} -> Map.put(acc, Atom.to_string(k), safe_summary(v))
+        :error -> acc
+      end
+    end)
   end
 
-  defp apply_config(key, value) when key in ["pty_init_sleep_ms", "pty_ready_sleep_ms"] do
-    atom_key = String.to_existing_atom(key)
-    sandbox = Application.get_env(:eai, :sandbox, [])
-    Application.put_env(:eai, :sandbox, Keyword.put(sandbox, atom_key, value))
+  defp list_persistent_term do
+    :persistent_term.get()
+    |> Enum.filter(fn {k, _v} -> eai_key?(k) end)
+    |> Enum.reduce(%{}, fn {k, v}, acc ->
+      Map.put(acc, Atom.to_string(k), safe_summary(v))
+    end)
+  rescue
+    _ -> %{}
   end
+
+  defp eai_key?(k) when is_atom(k) do
+    s = Atom.to_string(k)
+    String.starts_with?(s, "eai_") or String.starts_with?(s, "Elixir.Eai.")
+  end
+
+  defp eai_key?(_), do: false
+
+  # ── Read single ─────────────────────────────────────────────────
+
+  defp read_one("app_env", key) do
+    atom = String.to_existing_atom(key)
+    value = Application.get_env(:eai, atom)
+    %{ok: true, namespace: "app_env", key: key, value: safe_summary(value)}
+  rescue
+    _ -> %{error: "no such app_env key: #{key}"}
+  end
+
+  defp read_one("persistent_term", key) do
+    atom = String.to_existing_atom(key)
+    value = :persistent_term.get(atom)
+    %{ok: true, namespace: "persistent_term", key: key, value: safe_summary(value)}
+  rescue
+    _ -> %{error: "no such persistent_term key: #{key}"}
+  end
+
+  # ── Set ─────────────────────────────────────────────────────────
+
+  defp set_one("app_env", key, value) do
+    atom = string_to_key_atom(key)
+    Application.put_env(:eai, atom, value)
+    %{ok: true, namespace: "app_env", key: key, value: safe_summary(value), new: not has_app_env?(key)}
+  end
+
+  defp set_one("persistent_term", key, value) do
+    atom = String.to_existing_atom(key)
+    :persistent_term.put(atom, value)
+    %{ok: true, namespace: "persistent_term", key: key, value: safe_summary(value)}
+  rescue
+    ArgumentError ->
+      %{error: "persistent_term keys must already exist. Use app_env for new keys.", key: key}
+  end
+
+  # ── Helpers ─────────────────────────────────────────────────────
+
+  defp string_to_key_atom(key) do
+    String.to_existing_atom(key)
+  rescue
+    ArgumentError -> String.to_atom(key)
+  end
+
+  defp has_app_env?(key) do
+    atom = String.to_existing_atom(key)
+    _ = Application.get_env(:eai, atom)
+    true
+  rescue
+    _ -> false
+  end
+
+  defp safe_summary(value) when is_list(value) and length(value) > 20,
+    do: "[...] (#{length(value)} items)"
+
+  defp safe_summary(value) when is_list(value), do: value
+
+  defp safe_summary(value) when is_map(value) do
+    encoded = Jason.encode!(value)
+
+    if byte_size(encoded) > 500 do
+      "#{map_size(value)} keys, #{byte_size(encoded)} bytes"
+    else
+      value
+    end
+  rescue
+    _ -> "<unencodable map, #{map_size(value)} keys>"
+  end
+
+  defp safe_summary(value) when is_pid(value), do: "<pid>"
+  defp safe_summary(value) when is_reference(value), do: "<ref>"
+  defp safe_summary(value) when is_function(value), do: "<function>"
+  defp safe_summary(value) when is_tuple(value), do: "<tuple:#{tuple_size(value)}>"
+
+  defp safe_summary(value) when is_binary(value) and byte_size(value) > 500,
+    do: "#{byte_size(value)} bytes"
+
+  defp safe_summary(value), do: value
 end

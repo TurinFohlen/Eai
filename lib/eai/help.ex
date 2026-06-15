@@ -129,7 +129,7 @@ defmodule Eai do
       {"get_subagent_result", "%{\"subagent_task_id\"=>\"...\"} -> 结果",
        "Eai.Tool.GetSubagentResult"},
       {"set_config",
-       "%{\"key\"=>\"poll_cooldown_ms\", \"value\"=>3000} -> ok | list current values",
+       "%{\"namespace\"=>\"app_env|persistent_term\", \"key\"=>\"...\", \"value\"=>...} -> ok | list",
        "Eai.Tool.SetConfig"},
       {"get_local_time", "{} -> UTC ISO8601", "Eai.Tool.GetLocalTime"},
       {"read_media_file", "%{\"file_path\"=>\"...\", \"inject\"=>true, ...} -> 媒体/inject",

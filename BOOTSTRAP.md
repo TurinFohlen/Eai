@@ -132,7 +132,7 @@ config/tools/
 ├── list_chat_sessions.exs    # List chat sessions (message count, status)
 ├── close_chat_session.exs    # Close and free a chat session
 ├── get_local_time.exs        # UTC timestamp
-├── set_config.exs            # Tune poll_cooldown_ms, PTY timing
+├── set_config.exs            # Modify app env / persistent_term at runtime
 ├── hub_reload.exs            # Hot-reload hooks
 └── list_chara_cards.exs      # List available character cards
 ```
