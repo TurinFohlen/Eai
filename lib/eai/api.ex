@@ -18,7 +18,7 @@ defmodule Eai.API do
   ## Configuration
 
       config :eai, :api,
-        port: 4000,          # integer or :auto / "auto"
+        port: 4000,
         host: "0.0.0.0"
 
   ## Usage
@@ -34,7 +34,6 @@ defmodule Eai.API do
 
   def start do
     port = Application.get_env(:eai, :api, []) |> Keyword.get(:port, 4000)
-    port = Eai.Application.resolve_port(port)
     host = Application.get_env(:eai, :api, []) |> Keyword.get(:host, "0.0.0.0")
 
     IO.puts("🌐 Eai API listening on http://#{host}:#{port}")
