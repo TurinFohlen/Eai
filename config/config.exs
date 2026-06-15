@@ -93,6 +93,10 @@ import_config "#{config_env()}.exs"
 # ── API Endpoint ─────────────────────────────────────────────────────────────
 # OpenAI-compatible HTTP API. External tools (chatgpt-on-wechat, bots, n8n)
 # can use eai as a drop-in OpenAI replacement.
+#
+# `port` accepts:
+#   - integer  (e.g. 4002)          — fixed port
+#   - :auto    (or "auto")          — random free port in 1024–49151
 config :eai, :api,
   enabled: true,
   port: 4002,
