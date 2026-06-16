@@ -114,20 +114,22 @@ defmodule Eai.Hub do
   end
 
   @doc """
-  Reload hooks from `config/hooks/*.exs`.
+  Reload all runtime-extensible config without restarting the VM.
 
-  Wraps `Eai.Hub.Reloader.reload!/0`. Safe to call at runtime:
-  - Scans and re-compiles all hook files
-  - Atomically replaces `:eai_hooks` in `:persistent_term`
-  - Next call to `run/3` picks up the new hooks immediately
+  Reloads three registries in one call:
+  - Hooks: re-compiles `config/hooks/*.exs` → `:persistent_term.put(:eai_hooks, ...)`
+  - Models: re-reads `config/models/*.exs`  → `:persistent_term.put(:eai_models, ...)`
+  - Cards:  re-reads `config/chara_cards/*.json` → `:persistent_term.put(:eai_chara_cards, ...)`
+
+  All three take effect immediately — the next LLM call picks up new models/cards,
+  the next tool invocation picks up new hooks.
 
   ## IEx usage
 
-      # Standard reload
       iex> Eai.Hub.reload!()
       :ok
 
-      # Force full re-scan (clear cached source if any)
+      # Force full re-scan
       iex> :persistent_term.erase(:eai_hooks); Eai.Hub.reload!()
       :ok
 
@@ -136,5 +138,11 @@ defmodule Eai.Hub do
       mix run -e "Eai.Hub.reload!()"
   """
   @spec reload!() :: :ok | {:error, term()}
-  defdelegate reload!(), to: Reloader
+  def reload! do
+    hooks_result = Reloader.reload!()
+    _models = Eai.Models.reload()
+    _cards = Eai.Card.reload()
+
+    hooks_result
+  end
 end

@@ -180,6 +180,7 @@ defmodule Eai.Models do
     |> maybe_put(:api_key, api_key(entry))
     |> maybe_put(:receive_timeout, entry[:receive_timeout])
     |> maybe_put(:reasoning_effort, entry[:reasoning_effort])
+    |> maybe_put(:region, entry[:region])
   end
 
   # ── 内部加载 ─────────────────────────────────────────────────────────────────

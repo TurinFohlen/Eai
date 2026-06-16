@@ -52,7 +52,26 @@
 
 ```
 << model_config_new_file, takes_effect, on_vm_restart >>
-<< model_config_new_file, does_NOT_take_effect, at_runtime_without_reload_endpoint >>
+<< model_config_new_file, does_NOT_take_effect, at_runtime_without_reload_endpoint >>  # FIXED 2026-06-16: hub_reload now reloads models + cards
 << subagent_persona, looks_like_momoka, due_to_default_system_prompt >>
 << subagent_persona, not_indicative_of, model_fallback >>
+```
+
+```
+<< hub_reload, now_reloads, models_and_cards_in_addition_to_hooks >>
+<< model_config_new_file, takes_effect, at_runtime_via_hub_reload >>
+<< hub_reload, calls, Eai_Models_reload >>
+<< hub_reload, calls, Eai_Card_reload >>
+<< fix, applied, 2026-06-16 >>
+```
+
+```
+<< converse_adapter, now_implements, sigv4_signing >>
+<< sigv4, uses, aws_credentials_from_env >>
+<< sigv4, required_env_vars, AWS_ACCESS_KEY_ID_and_AWS_SECRET_ACCESS_KEY >>
+<< sigv4, optional_env_vars, AWS_SESSION_TOKEN_and_AWS_REGION >>
+<< model_config, supports, region_field_for_converse_provider >>
+<< Eai_Models_to_run_opts, now_includes, region >>
+<< Eai_LLM_Direct_adapter_opts, now_includes, region >>
+<< converse_sigv4, implemented, 2026-06-16 >>
 ```

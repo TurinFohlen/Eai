@@ -107,6 +107,11 @@ defmodule Eai do
       当 LLM 返回推理/思考内容但无文本输出且无工具调用时，
       自动将 thinking 内容注入 text 块，防止 OpenAI 400 错误。
 
+    ## AWS Bedrock Converse (SigV4 signing)
+    AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY  (必需)
+    AWS_REGION=us-east-1                       (可选，默认 us-east-1)
+    AWS_SESSION_TOKEN                          (可选，临时凭证)
+
     ## 调试环境变量
     EAI_DEBUG_PTY=1           原始 PTY 输出
     EAI_DEBUG_LLM_REQUEST=1   打印完整 LLM 请求体
@@ -138,7 +143,7 @@ defmodule Eai do
       {"replace_context", "%{\"file_path\"=>\"...\", \"format\"=>\"converse\"} -> ok",
        "Eai.Tool.ReplaceContext"},
       {"list_chat_sessions", "{} -> 会话列表", "Eai.Tool.ListChatSessions"},
-      {"hub_reload", "{} -> {:hooks => result}", "Eai.Tool.HubReload"}
+      {"hub_reload", "{} -> %{hooks, models, cards}", "Eai.Tool.HubReload"}
     ]
 
     header =

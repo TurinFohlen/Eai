@@ -190,7 +190,9 @@ defmodule Eai.LLM.Direct do
       effort: effort
     } = req_ctx
 
+    region = Map.get(opts, :region)
     adapter_opts = [reasoning_effort: effort]
+    adapter_opts = if region, do: Keyword.put(adapter_opts, :region, region), else: adapter_opts
     req = adapter.to_request_body(messages, model, prompt, schemas, adapter_opts)
     req_url = if is_nil(req.url), do: url, else: req.url
     headers = build_headers(provider, api_key, req.headers)

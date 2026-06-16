@@ -40,7 +40,7 @@ eai/
 │   ├── adapter.ex              # Adapter behaviour (to_request_body / from_response / from_messages)
 │   ├── adapter/openai.ex       # IR ↔ OpenAI Chat Completions
 │   ├── adapter/anthropic.ex    # IR ↔ Anthropic Messages API
-│   ├── adapter/converse.ex     # IR ↔ AWS Bedrock Converse
+│   ├── adapter/converse.ex     # IR ↔ AWS Bedrock Converse (SigV4 signed)
 │   ├── sandbox.ex              # Sandbox behaviour
 │   ├── sandbox/pty_pool.ex     # PTY GenServer pool - spawns/kills/resets bash shells
 │   ├── sandbox/result_collector.ex
@@ -103,7 +103,7 @@ IR [Eai.Message.t()]
 │ Eai.Adapter (behaviour)              │
 │   ├── Anthropic  → IR ↔ Anthropic Messages   │
 │   ├── OpenAI     → IR ↔ Chat Completions     │
-│   └── Converse   → IR ↔ Bedrock Converse     │
+│   └── Converse   → IR ↔ Bedrock Converse (SigV4) │
 └──────────────────────────────────────┘
     │
     ▼
@@ -320,7 +320,7 @@ Eai.LLM.Direct
 | `Eai.Message` | Module | Converse-based IR constructors & accessors |
 | `Eai.Adapter.OpenAI` | Module | IR ↔ OpenAI Chat Completions |
 | `Eai.Adapter.Anthropic` | Module | IR ↔ Anthropic Messages API |
-| `Eai.Adapter.Converse` | Module | IR ↔ Bedrock Converse |
+| `Eai.Adapter.Converse` | Module | IR ↔ Bedrock Converse (SigV4) |
 | `Eai.Models` | Module | Model registry queries |
 | `Eai.Prompts` | Module | Prompt registry queries |
 | `Eai.Card` | Module | Character Card V2 loader |
