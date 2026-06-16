@@ -75,3 +75,12 @@
 << Eai_LLM_Direct_adapter_opts, now_includes, region >>
 << converse_sigv4, implemented, 2026-06-16 >>
 ```
+
+```
+<< tool_telemetry_events, were_duplicated_between, Direct_and_Hub >>
+<< Hub_telemetry_events, now_prefixed_with, hub_ >>
+<< [:eai,:tool,:pre], renamed_to, [:eai,:tool,:hub_pre]_in_Hub >>
+<< [:eai,:tool,:post], renamed_to, [:eai,:tool,:hub_post]_in_Hub >>
+<< [:eai,:tool,:blocked], renamed_to, [:eai,:tool,:hub_blocked]_in_Hub >>
+<< telemetry_namespace_fix, applied, 2026-06-16 >>
+```

@@ -7,7 +7,7 @@ defmodule Eai.Hub do
 
   - **Pre-hooks**: intercept, block, or modify arguments before execution
   - **Post-hooks**: observe, block, or transform results after execution
-  - **Telemetry**: uniform `:eai, :tool, :pre` / `:eai, :tool, :post` events
+  - **Telemetry**: uniform `:eai, :tool, :hub_pre` / `:eai, :tool, :hub_post` events
 
   ## Why this design (decision #1 + #2)?
 
@@ -51,16 +51,16 @@ defmodule Eai.Hub do
 
   ## Telemetry events
 
-  - `[:eai, :tool, :pre]` — fired before pre-hooks, carries `{mod, fun, args}`
-  - `[:eai, :tool, :post]` — fired after post-hooks, carries `{mod, fun, result, duration_ms}`
-  - `[:eai, :tool, :blocked]` — fired when any hook blocks (pre or post)
+  - `[:eai, :tool, :hub_pre]` — fired before pre-hooks, carries `{mod, fun, args}`
+  - `[:eai, :tool, :hub_post]` — fired after post-hooks, carries `{mod, fun, result, duration_ms}`
+  - `[:eai, :tool, :hub_blocked]` — fired when any hook blocks (pre or post)
   """
   @spec run(module(), atom(), [any()]) :: {:ok, any()} | {:block, String.t()}
   def run(mod, fun, args) do
     tool_name = "#{mod}.#{fun}"
 
     :telemetry.execute(
-      [:eai, :tool, :pre],
+      [:eai, :tool, :hub_pre],
       %{system_time: System.system_time()},
       %{tool: tool_name, mod: mod, fun: fun, args: args}
     )
@@ -70,7 +70,7 @@ defmodule Eai.Hub do
     case Pipeline.pre_hooks(mod, fun, args) do
       {:block, reason} ->
         :telemetry.execute(
-          [:eai, :tool, :blocked],
+          [:eai, :tool, :hub_blocked],
           %{system_time: System.system_time()},
           %{tool: tool_name, phase: :pre, reason: reason}
         )
@@ -92,7 +92,7 @@ defmodule Eai.Hub do
         case Pipeline.post_hooks(mod, fun, effective_args, raw_result) do
           {:block, reason} ->
             :telemetry.execute(
-              [:eai, :tool, :blocked],
+              [:eai, :tool, :hub_blocked],
               %{system_time: System.system_time()},
               %{tool: tool_name, phase: :post, reason: reason}
             )
@@ -103,7 +103,7 @@ defmodule Eai.Hub do
             duration_ms = System.monotonic_time(:millisecond) - start_ms
 
             :telemetry.execute(
-              [:eai, :tool, :post],
+              [:eai, :tool, :hub_post],
               %{duration_ms: duration_ms},
               %{tool: tool_name, mod: mod, fun: fun, result: final_result}
             )

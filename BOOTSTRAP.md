@@ -379,7 +379,8 @@ All `:telemetry.execute/3` calls land on a single handler: `Eai.TelemetryHandler
 | `[:eai, :task, :complete]` | `Eai.Sandbox.PTYPool` | Task complete |
 | `[:eai, :task, :timeout]` | `Eai.Task` | Task timed out |
 | `[:eai, :llm, :request, :start \| :stop \| :error]` | `Eai.LLM.Direct` | LLM roundtrip |
-| `[:eai, :tool, :execute \| :error]` | `Eai.LLM.Direct` | Tool execution |
+| `[:eai, :tool, :pre \| :post \| :blocked \| :error]` | `Eai.LLM.Direct` | Tool call lifecycle (Direct side) |
+| `[:eai, :tool, :hub_pre \| :hub_post \| :hub_blocked]` | `Eai.Hub` | Hook dispatch lifecycle (Hub side) |
 | `[:eai, :hook, :auto_snapshot, :saved \| :rolled_back \| :cleared]` | `Eai.Hook.AutoSnapshot` | Snapshot lifecycle |
 | `[:eai, :adapter, :anthropic, :*]` | `Eai.Adapter.Anthropic` | `to_request_body` / `from_response` / `from_messages` |
 | `[:eai, :adapter, :converse, :*]` | `Eai.Adapter.Converse` | (same three) |
