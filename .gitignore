@@ -2,15 +2,21 @@
 _build/
 deps/
 doc/
-#Personal
+docs/
+.hexignore
+# Personal / private
 chat_records/
+config/models/glm_5_1.exs
+config/models/xingchen_glm_5_1.exs
+
 # Mix
 *.ez
-#editor
+
+# Editor
 *.bak
+
 # OS
 .DS_Store
-Thumbs.db__pycache__/
-*.pyc
--e __pycache__/
+Thumbs.db
+__pycache__/
 *.pyc

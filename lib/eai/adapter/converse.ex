@@ -21,7 +21,7 @@ defmodule Eai.Adapter.Converse do
      (+ optional `x-amz-security-token`) headers
 
   The signed headers are returned in the adapter response map, and
-  `Eai.LLM.Direct.build_headers/3` passes them through unchanged
+  Eai.LLM.Direct passes adapter headers through unchanged
   (first clause: `when headers != []`).
 
   ## Model config example
@@ -190,19 +190,25 @@ defmodule Eai.Adapter.Converse do
     # ── Canonical request ───────────────────────────────────────────
     canonical_request =
       "POST\n" <>
-        canonical_uri <> "\n" <>
+        canonical_uri <>
         "\n" <>
-        canonical_headers <> "\n" <>
-        signed_headers <> "\n" <>
+        "\n" <>
+        canonical_headers <>
+        "\n" <>
+        signed_headers <>
+        "\n" <>
         payload_hash
 
     # ── String to sign ──────────────────────────────────────────────
     credential_scope = "#{date_stamp}/#{region}/#{@service}/aws4_request"
 
     string_to_sign =
-      @algorithm <> "\n" <>
-        amz_date <> "\n" <>
-        credential_scope <> "\n" <>
+      @algorithm <>
+        "\n" <>
+        amz_date <>
+        "\n" <>
+        credential_scope <>
+        "\n" <>
         sha256_hex(canonical_request)
 
     # ── Sign ────────────────────────────────────────────────────────
@@ -210,7 +216,8 @@ defmodule Eai.Adapter.Converse do
     signature = hmac_sha256_hex(signing_key, string_to_sign)
 
     authorization =
-      @algorithm <> " " <>
+      @algorithm <>
+        " " <>
         "Credential=#{access_key}/#{credential_scope}, " <>
         "SignedHeaders=#{signed_headers}, " <>
         "Signature=#{signature}"

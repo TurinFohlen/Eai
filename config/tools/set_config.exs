@@ -158,7 +158,14 @@ defmodule Eai.Tool.SetConfig do
   defp set_one("app_env", key, value) do
     atom = string_to_key_atom(key)
     Application.put_env(:eai, atom, value)
-    %{ok: true, namespace: "app_env", key: key, value: safe_summary(value), new: not has_app_env?(key)}
+
+    %{
+      ok: true,
+      namespace: "app_env",
+      key: key,
+      value: safe_summary(value),
+      new: not has_app_env?(key)
+    }
   end
 
   defp set_one("persistent_term", key, value) do

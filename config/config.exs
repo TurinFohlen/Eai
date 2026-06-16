@@ -60,8 +60,7 @@ config :eai, :sandbox,
 config :eai, :poll_cooldown_ms, 2_000
 
 # ── Telemetry ─────────────────────────────────────────────────────────────────
-config :eai, :telemetry_events, 
-[
+config :eai, :telemetry_events, [
   {[:eai, :session, :spawn], "PTY session spawned"},
   {[:eai, :session, :reset], "PTY session force-reset"},
   {[:eai, :task, :start], "Task submitted"},
@@ -81,8 +80,9 @@ config :eai, :telemetry_events,
   {[:eai, :adapter, :converse, :from_messages], "Converse adapter from_messages"},
   {[:eai, :adapter, :openai, :to_request_body], "OpenAI adapter to_request_body"},
   {[:eai, :adapter, :openai, :from_response], "OpenAI adapter from_response"},
-  {[:eai, :adapter, :openai, :from_messages], "OpenAI adapter from_messages"},
+  {[:eai, :adapter, :openai, :from_messages], "OpenAI adapter from_messages"}
 ]
+
 # ── System Prompt ─────────────────────────────────────────────────────────────
 # prompts loaded via config/prompts/
 
