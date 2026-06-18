@@ -1,0 +1,52 @@
+# Elixir build artifacts
+_build/
+deps/
+doc/
+docs/
+.hexignore
+
+# Compiled beam files
+*.beam
+
+# Compressed files
+*.gz
+*.zip
+*.tar
+*.tar.gz
+
+# Personal / private
+chat_records/
+config/models/glm_5_1.exs
+config/models/xingchen_glm_5_1.exs
+
+# Mix
+*.ez
+
+# Editor
+*.bak
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+__pycache__/
+*.pyc
+
+# Language server / IDE
+.elixir_ls/
+.idea/
+.vscode/
+*.iml
+
+# Environment variables
+.env
+.env.local
+
+# Logs
+npm-debug.log
+yarn-error.log
+
+# Coverage reports
+cover/
+.gitignore
