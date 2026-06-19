@@ -409,10 +409,12 @@ defmodule Eai.LLM.Direct do
             status: :error
           })
 
-          :telemetry.execute([:eai, :llm, :request, :error], %{duration_ms: duration}, %{
+          :telemetry.execute([:eai, :error, :llm], %{duration_ms: duration}, %{
             pty_session_id: pty_session_id,
-            reason: "HTTP #{status}",
-            body: inspect(body)
+            chat_session_id: chat_session_id,
+            kind: :http,
+            status: status,
+            body: body
           })
 
           {:error, "HTTP #{status}: #{inspect(body)}", messages}
@@ -423,9 +425,11 @@ defmodule Eai.LLM.Direct do
             status: :error
           })
 
-          :telemetry.execute([:eai, :llm, :request, :error], %{duration_ms: duration}, %{
+          :telemetry.execute([:eai, :error, :llm], %{duration_ms: duration}, %{
             pty_session_id: pty_session_id,
-            reason: inspect(reason)
+            chat_session_id: chat_session_id,
+            kind: :transport,
+            reason: reason
           })
 
           {:error, reason, messages}
@@ -522,10 +526,14 @@ defmodule Eai.LLM.Direct do
         end
       rescue
         e ->
-          :telemetry.execute([:eai, :tool, :error], %{system_time: System.system_time()}, %{
+          :telemetry.execute([:eai, :error, :tool], %{system_time: System.system_time()}, %{
             tool: name,
+            mod: dispatch[name],
+            chat_session_id: chat_session_id,
             pty_session_id: pty_session_id,
-            error: Exception.message(e)
+            kind: :exception,
+            error: %{type: e.__struct__, message: Exception.message(e)},
+            stacktrace: __STACKTRACE__
           })
 
           Jason.encode!(%{error: Exception.message(e)})
