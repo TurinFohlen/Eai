@@ -4,8 +4,6 @@ defmodule Eai.PTY.Supervisor do
 
   Each PTY session is a `:transient` child — restarted on abnormal exit,
   not on `:normal` / `:shutdown`. Session creation is driven by
-  `Eai.PTY.get_or_create/1`; sessions never start themselves.
-
   ## Graph
   <<{Eai.Naming, required_by, Eai.PTY.Supervisor}.
   <<{Eai.PTY.Registry, required_by, Eai.PTY.Supervisor}.
