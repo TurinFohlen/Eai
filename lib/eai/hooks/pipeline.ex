@@ -25,9 +25,11 @@ defmodule Eai.Hub.Pipeline do
   The `tool_name` is always `"LLM_REQUEST"`.
   """
 
-  require Logger
+  ## Graph
+  <<{Eai.Hub.Pipeline, required_by, Eai.Hub}.
+  <<{Eai.Hub.Pipeline, required_by, Eai.PTY.Session}.
 
-  @hooks_key :eai_hooks
+
 
   # ── Registry ─────────────────────────────────────────────────────────
 

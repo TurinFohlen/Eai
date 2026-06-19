@@ -8,6 +8,18 @@ defmodule Eai.PTY do
   Sessions are created lazily on first `exec_async/3` call.
   Use `Eai.PTY.Supervisor.stop_session/1` to explicitly terminate a session.
 
+  ## Graph
+  <<{Eai.Hub, required_by, Eai.PTY}.
+  <<{Eai.PTY.Registry, required_by, Eai.PTY}.
+  <<{Eai.PTY.Supervisor, required_by, Eai.PTY}.
+  <<{Eai.PTY.Session, required_by, Eai.PTY}.
+  <<{Eai.PTY, required_by, execute_script_exs}.
+  <<{Eai.PTY, required_by, write_to_session_exs}.
+  <<{Eai.PTY, required_by, reset_session_exs}.
+  <<{Eai.PTY, required_by, list_pty_sessions_exs}.
+  <<{Eai.PTY, required_by, force_complete_task_exs}.
+  <<{Eai.PTY, required_by, get_task_result_exs}.
+
   ## Replaces
 
   `Eai.Sandbox.PTYPool` (deleted). Call sites update:

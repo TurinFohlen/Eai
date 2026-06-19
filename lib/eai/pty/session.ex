@@ -13,6 +13,14 @@ defmodule Eai.PTY.Session do
     session with a fresh PTY. `init/1` force-completes any in-flight task
     left over from the previous incarnation.
 
+  ## Graph
+  <<{Eai.PTY.Registry, required_by, Eai.PTY.Session}.
+  <<{Eai.PTY.Supervisor, spawned_by, Eai.PTY.Session}.
+  <<{Eai.Hub, required_by, Eai.PTY.Session}.
+  <<{Eai.ResultCollector, required_by, Eai.PTY.Session}.
+  <<{Eai.Naming, required_by, Eai.PTY.Session}.
+  <<{Eai.PTY.Session, required_by, Eai.PTY}.
+
   ## Lifecycle
 
       start_link(pty_session_id)

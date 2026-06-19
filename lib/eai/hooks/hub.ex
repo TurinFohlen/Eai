@@ -22,6 +22,12 @@ defmodule Eai.Hub do
   `:eai_hooks` is empty (the 500ms window before Application.start fires
   `reload!`). No "bare apply" fallback path is needed.
 
+  ## Graph
+  <<{Eai.Hub.Pipeline, required_by, Eai.Hub}.
+  <<{Eai.Hub, required_by, Eai.PTY}.
+  <<{Eai.Hub, required_by, Eai.PTY.Session}.
+  <<{Eai.Hub, required_by, Eai.LLM.Direct}.
+
   ## reload!
 
   Delegates to `Eai.Hub.Reloader.reload!/0`. Exposed here for ergonomics:

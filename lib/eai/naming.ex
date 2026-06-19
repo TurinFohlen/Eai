@@ -1,5 +1,15 @@
 defmodule Eai.Naming do
-  @moduledoc false
+  @moduledoc """
+  Maps logical names to registered process names, supporting multi-instance deployments.
+
+  ## Graph
+  <<{Eai.Naming, required_by, Eai.PTY.Registry}.
+  <<{Eai.Naming, required_by, Eai.PTY.Supervisor}.
+  <<{Eai.Naming, required_by, Eai.PTY.Session}.
+  <<{Eai.Naming, required_by, Eai.PTY}.
+  <<{Eai.Naming, required_by, Eai.Chat}.
+  <<{Eai.Naming, required_by, Eai.Application}.
+  """
 
   @doc "读取当前实例 ID，默认 \"default\"。"
   def instance_id do

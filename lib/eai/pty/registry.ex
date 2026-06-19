@@ -8,6 +8,13 @@ defmodule Eai.PTY.Registry do
   Started as a child of `Eai.Supervisor`. All Registry lookups go through
   `Eai.Naming.pty_session/1` — do not call Registry directly from outside
   the PTY subsystem.
+
+  ## Graph
+  <<{Eai.Naming, required_by, Eai.PTY.Registry}.
+  <<{Eai.PTY.Registry, required_by, Eai.PTY.Supervisor}.
+  <<{Eai.PTY.Registry, required_by, Eai.PTY.Session}.
+  <<{Eai.PTY.Registry, required_by, Eai.PTY}.
+  <<{Eai.PTY.Registry, required_by, Eai.Application}.
   """
 
   @doc "Child spec for `Eai.Supervisor`."
