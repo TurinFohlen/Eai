@@ -37,7 +37,7 @@ defmodule Eai.Tool.ForceCompleteTask do
     target = Map.get(args, "pty_session_id", pty_session_id)
 
     {:ok, output} = Eai.ResultCollector.force_complete(task_id)
-    Eai.Naming.pool().clear_task(target, task_id)
+    Eai.PTY.clear_task(target, task_id)
     %{status: "complete", output: output} |> Eai.Utils.sanitize_value() |> Jason.encode!()
   end
 end

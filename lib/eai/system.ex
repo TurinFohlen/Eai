@@ -314,7 +314,7 @@ defmodule Eai.System do
   # A PTY session is "idle" iff it has no `current_task`. We only need
   # the boolean answer, not the full info map.
   defp pty_idle? do
-    Eai.Naming.pool().list_sessions()
+    Eai.PTY.list_sessions()
     |> Enum.all?(fn {_id, info} -> is_nil(Map.get(info, :current_task)) end)
   end
 

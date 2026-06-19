@@ -26,7 +26,7 @@ defmodule Eai.Tool.ResetSession do
   @impl true
   def execute(args, pty_session_id, _chat_session_id) do
     target = Map.get(args, "pty_session_id", pty_session_id)
-    Eai.Naming.pool().force_reset(target)
+    Eai.PTY.force_reset(target)
 
     %{
       status: "ok",

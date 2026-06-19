@@ -386,8 +386,11 @@ defmodule Eai.Chat do
         }
       )
 
-      task = Task.async(fn -> Direct.run(new_messages, ctx.pty_session, run_opts) end)
-      Process.unlink(task.pid)
+      task =
+        Task.Supervisor.async_nolink(
+          Eai.Naming.task_supervisor(),
+          fn -> Direct.run(new_messages, ctx.pty_session, run_opts) end
+        )
 
       remind_timer =
         if ctx.timeout != :infinity and is_integer(ctx.timeout) and ctx.timeout > 0 do
@@ -569,8 +572,11 @@ defmodule Eai.Chat do
 
     run_opts = build_run_opts(ctx)
 
-    task = Task.async(fn -> Direct.run(new_messages, ctx.pty_session, run_opts) end)
-    Process.unlink(task.pid)
+    task =
+      Task.Supervisor.async_nolink(
+        Eai.Naming.task_supervisor(),
+        fn -> Direct.run(new_messages, ctx.pty_session, run_opts) end
+      )
 
     remind_timer =
       if ctx.timeout != :infinity and is_integer(ctx.timeout) and ctx.timeout > 0 do

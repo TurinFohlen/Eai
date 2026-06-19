@@ -9,9 +9,6 @@ defmodule Eai.Naming do
   @doc "Chat GenServer 的注册名。"
   def chat, do: via(Eai.Chat)
 
-  @doc "PTYPool GenServer 的注册名。"
-  def pool, do: via(Eai.Sandbox.PTYPool)
-
   @doc "PubSub 的注册名。"
   def pubsub, do: via(Eai.PubSub)
 
@@ -20,6 +17,17 @@ defmodule Eai.Naming do
 
   @doc "Task.Supervisor 的注册名，通用异步任务池。"
   def task_supervisor, do: via(Eai.TaskSupervisor)
+
+  @doc "PTY OTP Registry 的注册名。"
+  def pty_registry, do: via(Eai.PTY.Registry)
+
+  @doc "PTY DynamicSupervisor 的注册名。"
+  def pty_supervisor, do: via(Eai.PTY.Supervisor)
+
+  @doc "通过 Registry 寻址单个 PTY.Session 的 via tuple。"
+  def pty_session(pty_session_id) do
+    {:via, Registry, {pty_registry(), pty_session_id}}
+  end
 
   # 默认实例直接返回原始名，其余拼接 CamelCase 后缀——
   # 这样 instance_id == "default" 时行为与硬编码时完全一致，零破坏。

@@ -90,7 +90,7 @@ defmodule Eai.Tool.WriteToSession do
       )
     end
 
-    Eai.Naming.pool().write_raw(target, raw)
+    Eai.PTY.write_raw(target, raw)
 
     %{status: "ok", wrote: inspect(raw)}
     |> Eai.Utils.sanitize_value()

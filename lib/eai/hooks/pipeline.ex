@@ -102,6 +102,30 @@ defmodule Eai.Hub.Pipeline do
     |> Enum.reduce_while({:ok, result}, &reduce_post_hook(&1, &2, tool_name, payload))
   end
 
+  # ── Terminal lifecycle: Post-only hooks ──────────────────────────────
+
+  @doc """
+  Run post-hooks for a terminal lifecycle event (e.g. `PTY.Session.terminate/2`).
+
+  The result passed to each hook is `{:terminated, reason}`. Hooks distinguish
+  terminal events from normal post results by pattern-matching on the tagged tuple:
+
+      def verdict(:post, _tool, _payload, {:terminated, reason}), do: cleanup(reason)
+      def verdict(:post, _tool, _payload, result), do: normal(result)
+
+  ## Semantics
+
+  - `:block` verdict aborts the remaining hook chain only; it does **not** prevent
+    OTP from continuing the process shutdown (`terminate/2` return is ignored by OTP).
+  - Hooks must **not** `GenServer.call` the dying process — deadlock. Use
+    `Cache` / `PubSub` / `ETS` for any side effects.
+  """
+  @spec post_only_hooks(module(), atom(), [any()]) :: {:ok, any()} | {:block, String.t()}
+  def post_only_hooks(mod, fun, args) do
+    [reason | _] = args
+    post_hooks(mod, fun, args, {:terminated, reason})
+  end
+
   # ── LLM: Pre-hooks ───────────────────────────────────────────────────
 
   @doc """

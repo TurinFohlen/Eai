@@ -15,7 +15,7 @@ defmodule Eai.Tool.ListPtySessions do
 
   @impl true
   def execute(_args, _pty_session_id, _chat_session_id) do
-    Eai.Naming.pool().list_sessions()
+    Eai.PTY.list_sessions()
     |> Eai.Utils.sanitize_value()
     |> Jason.encode!()
   end

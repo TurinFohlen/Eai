@@ -50,7 +50,7 @@ defmodule Eai.Tool.GetTaskResult do
 
       task_id ->
         if Eai.ResultCollector.check_and_clear_interrupt_flag(pty_session_id) do
-          Eai.Naming.pool().interrupt_task(pty_session_id)
+          Eai.PTY.interrupt_task(pty_session_id)
 
           %{status: "complete", output: "Task forcefully interrupted by user. Please reply now."}
           |> Eai.Utils.sanitize_value()

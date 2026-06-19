@@ -65,7 +65,7 @@ defmodule Eai.Tool.ExecuteScript do
     with :ok <- File.write(path, script),
          :ok <- debug_script(path, script),
          {:ok, ^task_id} <-
-           Eai.Naming.pool().exec_async(sid, "bash #{path}; rm -f #{path}", task_id) do
+           Eai.PTY.exec_async(sid, "bash #{path}; rm -f #{path}", task_id) do
       if sbc do
         sbc_wait(task_id, sid)
       else
@@ -89,7 +89,7 @@ defmodule Eai.Tool.ExecuteScript do
 
     # Check interrupt flag
     if Eai.ResultCollector.check_and_clear_interrupt_flag(pty_session_id) do
-      Eai.Naming.pool().interrupt_task(pty_session_id)
+      Eai.PTY.interrupt_task(pty_session_id)
 
       %{status: "interrupted", task_id: task_id}
       |> Eai.Utils.sanitize_value()
@@ -108,7 +108,7 @@ defmodule Eai.Tool.ExecuteScript do
         _ when max_loops <= 0 ->
           Logger.warning("SBC timeout for #{task_id}, force-completing")
           {:ok, output} = Eai.ResultCollector.force_complete(task_id)
-          Eai.Naming.pool().clear_task(pty_session_id, task_id)
+          Eai.PTY.clear_task(pty_session_id, task_id)
 
           %{status: "timeout", output: output, task_id: task_id}
           |> Eai.Utils.sanitize_value()

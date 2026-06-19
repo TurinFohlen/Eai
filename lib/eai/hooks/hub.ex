@@ -114,6 +114,43 @@ defmodule Eai.Hub do
   end
 
   @doc """
+  Post-only dispatch for terminal lifecycle events (e.g. `PTY.Session.terminate/2`).
+
+  Skips pre-hooks and execution; runs only the post-hook pipeline with
+  `{:terminated, reason}` as the result. Hook authors distinguish terminal
+  events by pattern-matching on the tagged tuple:
+
+      def verdict(:post, _tool, _payload, {:terminated, reason}), do: cleanup(reason)
+      def verdict(:post, _tool, _payload, result), do: normal(result)
+
+  ## Semantics
+
+  - `:block` aborts the remaining hook chain only — it does **not** prevent OTP
+    shutdown (`terminate/2` return is ignored by OTP regardless).
+  - Hooks must **not** `GenServer.call` the dying process — deadlock. Use
+    `Cache` / `PubSub` / `ETS` for side effects.
+
+  ## Usage
+
+      @impl true
+      def terminate(reason, state) do
+        Eai.Hub.run_post_only(__MODULE__, :terminate, [reason, state])
+      end
+  """
+  @spec run_post_only(module(), atom(), [any()]) :: {:ok, any()} | {:block, String.t()}
+  def run_post_only(mod, fun, args) do
+    tool_name = "#{mod}.#{fun}"
+
+    :telemetry.execute(
+      [:eai, :lifecycle, :hub_post_only],
+      %{system_time: System.system_time()},
+      %{tool: tool_name, mod: mod, fun: fun, args: args}
+    )
+
+    Pipeline.post_only_hooks(mod, fun, args)
+  end
+
+  @doc """
   Reload all runtime-extensible config without restarting the VM.
 
   Reloads three registries in one call:

@@ -24,8 +24,9 @@ defmodule Eai.Application do
         [
           {Phoenix.PubSub, name: Eai.Naming.pubsub()},
           Eai.Cache.Cache,
+          {Registry, keys: :unique, name: Eai.Naming.pty_registry()},
           {Task.Supervisor, name: Eai.Naming.task_supervisor()},
-          Eai.Sandbox.PTYPool,
+          Eai.PTY.Supervisor,
           {Eai.Chat, []}
         ] ++ api_children
       else
@@ -36,7 +37,7 @@ defmodule Eai.Application do
     result = Supervisor.start_link(children, opts)
 
     # Load hooks asynchronously after supervisor is up (decision #4 + #9).
-    # 500ms delay ensures all children (Cache, PTYPool, etc.) are ready before
+    # 500ms delay ensures all children (Cache, PTY.Supervisor, etc.) are ready before
     # Reloader tries to compile hook files that may reference them.
     # Task.start (not Task.async) — fire-and-forget, no supervision needed.
     if Application.get_env(:eai, :start_application, true) do
