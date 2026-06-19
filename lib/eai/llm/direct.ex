@@ -79,7 +79,9 @@ defmodule Eai.LLM.Direct do
   defp compile_or_load(path) do
     case tool_module_name(path) do
       {:ok, mod} ->
-        if Code.ensure_loaded?(mod) and function_exported?(mod, :schema, 0), do: [mod], else: compile_to_list(path)
+        if Code.ensure_loaded?(mod) and function_exported?(mod, :schema, 0),
+          do: [mod],
+          else: compile_to_list(path)
 
       :error ->
         compile_to_list(path)

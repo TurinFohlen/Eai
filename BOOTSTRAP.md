@@ -1,17 +1,17 @@
 # Eai - Bootstrap Guide
 
-> Version 0.1.13 • Extreme minimal AI assistant with persistent PTY and recursive sub-agents. MCP servers are accessed via external CLI tools (mcporter, agent-browser), not baked into the framework.
+> Version 0.2.0 • Extreme minimal AI assistant with persistent PTY and recursive sub-agents. MCP servers are accessed via external CLI tools (mcporter, agent-browser), not baked into the framework.
 
 ---
 
 ## 1. What Is Eai?
 
-Eai is an **Elixir application** that gives an AI model a real, persistent Linux shell. It wraps multiple LLM providers behind a unified adapter layer, manages multi-session conversation history, and exposes 14 tools the model can call autonomously. The result: an AI engineer that can write bash scripts, poll results, spawn cheap sub-agents, read images, and maintain long-lived graph-based memory.
+Eai is an **Elixir application** that gives an AI model a real, persistent Linux shell. It wraps multiple LLM providers behind a unified adapter layer, manages multi-session conversation history, and exposes 18 tools the model can call autonomously. The result: an AI engineer that can write bash scripts, poll results, spawn cheap sub-agents, read images, and maintain long-lived graph-based memory.
 
 **One-liner architecture:**
 
 ```
-Eai.Chat → Eai.LLM.Direct (adapter → API) → tool loop → Eai.Sandbox.PTYPool + Eai.ResultCollector
+Eai.Chat → Eai.LLM.Direct (adapter → API) → tool loop → Eai.PTY → Eai.PTY.Session (per-session GenServer) + Eai.ResultCollector
 ```
 
 ---
@@ -25,7 +25,7 @@ eai/
 │   ├── config.exs              # Sandbox, polling, sentinel, telemetry defaults
 │   ├── models.exs              # LLM model registry (deepseek, gpt4o, claude_opus, …)
 │   ├── prompts.exs             # System prompt registry (momoka, coder, analyst)
-│   ├── tools/                  # 14 self-contained tool files (.exs) - plugin architecture
+│   ├── tools/                  # 18 self-contained tool files (.exs) - plugin architecture
 │   ├── prompts/                # Individual prompt files per persona
 │   ├── hooks/                  # Hook .exs files (numeric prefix = load order)
 │   ├── chara_cards/            # Character Card V2 JSON files (SillyTavern-compatible)
@@ -41,9 +41,12 @@ eai/
 │   ├── adapter/openai.ex       # IR ↔ OpenAI Chat Completions
 │   ├── adapter/anthropic.ex    # IR ↔ Anthropic Messages API
 │   ├── adapter/converse.ex     # IR ↔ AWS Bedrock Converse (SigV4 signed)
-│   ├── sandbox.ex              # Sandbox behaviour
-│   ├── sandbox/pty_pool.ex     # PTY GenServer pool - spawns/kills/resets bash shells
-│   ├── sandbox/result_collector.ex
+│   ├── sandbox.ex              # Sandbox behaviour (legacy — replaced by Eai.PTY)
+│   ├── pty.ex                  # PTY Public API — routes all calls through Hub.run/3
+│   ├── pty/registry.ex          # OTP Registry: pty_session_id → PTY.Session PID
+│   ├── pty/session.ex           # Per-session GenServer owning one PTY
+│   ├── pty/supervisor.ex        # DynamicSupervisor — spawns :transient children
+│   ├── sandbox/result_collector.ex  # Sentinel-based output buffering
 │   ├── hooks/hook.ex           # Eai.Hook behaviour + __using__ macro
 │   ├── hooks/hub.ex            # Eai.Hub.run/3 central dispatch + reload!/0
 │   ├── hooks/pipeline.ex       # pre/post/llm_pre/llm_post hook pipelines
@@ -127,10 +130,11 @@ config/tools/
 ├── reset_session.exs         # Force-kill stuck PTY
 ├── force_complete_task.exs   # Extract partial output from hung tasks
 ├── read_media_file.exs       # Image/video → base64, optional vision analysis
-├── export_context.exs        # Save conversation history → gzip
-├── replace_context.exs       # Restore conversation history from gzip
+├── export_chat_session_context.exs  # Save conversation history → gzip
+├── replace_chat_session_context.exs # Restore conversation history from gzip
+├── export_global_context.exs  # Save entire runtime state → gzip
+├── replace_global_context.exs # Restore entire runtime state from gzip
 ├── list_chat_sessions.exs    # List chat sessions (message count, status)
-├── close_chat_session.exs    # Close and free a chat session
 ├── get_local_time.exs        # UTC timestamp
 ├── set_config.exs            # Modify app env / persistent_term at runtime
 ├── hub_reload.exs            # Hot-reload hooks
@@ -150,11 +154,24 @@ Both `execute_script` and `call_subagent` support SBC via `sbc: true` flag. SBC 
 
 ### 3.5 PTY Lifecycle & Sentinel Protocol
 
-1. **Spawn:** `Eai.Sandbox.PTYPool` creates a bash PTY per `pty_session_id` in `work_dir_root/<session>/`
-2. **Execute:** Tool writes a temp script, runs `bash <script>`, captures output between sentinels
-3. **Collect:** `Eai.ResultCollector.collect/2` buffers PTY output, strips ANSI escape codes, extracts between `___EAI_START___` / `___EAI_END___`
-4. **Interrupt:** `write_to_session` injects `\x03` (Ctrl+C) to kill running commands
-5. **Reset:** `reset_session` force-kills and recreates the PTY
+The PTY subsystem was refactored (v0.2.0) from a monolithic GenServer pool into four specialized modules:
+
+| Module | Role |
+|--------|------|
+| `Eai.PTY` | Public API — all calls route through `Eai.Hub.run/3` for hook interception |
+| `Eai.PTY.Registry` | OTP Registry — maps `pty_session_id` → `PTY.Session` PID |
+| `Eai.PTY.Session` | Per-session GenServer — owns one PTY, handles exec/interrupt/reset/clear |
+| `Eai.PTY.Supervisor` | DynamicSupervisor — spawns `:transient` children, restarts on abnormal exit |
+
+**Lifecycle (write path):**
+
+1. **Lookup/Create:** `Eai.PTY.exec_async/3` → `get_or_create/1` → Registry lookup → miss → `Supervisor.start_session/1` → `Session.start_link/1`
+2. **Session init:** `PTY.Session.init/1` → `mkdir work_dir`, symlink `priv/` + mounts, `ExPTY.spawn(bash)`, flush init noise, telemetry
+3. **Execute:** `Hub.run(Session, :exec, [pid, task_id, cmd])` → wraps cmd in base64-encoded sentinels → `ExPTY.write(pty, line)`
+4. **Collect:** PTY output → `send(self(), {:pty_data, data})` → `ResultCollector.collect/2` — buffers between `___EAI_START___` / `___EAI_END___`, strips ANSI
+5. **Interrupt:** `write_to_session` → `Hub.run(Session, :write_raw, [pid, input])` — injects `\x03` (Ctrl+C) + right sentinel echo
+6. **Reset:** `reset_session` → `Hub.run(Session, :force_reset, [pid])` → kills PTY process → calls `spawn_pty/1` to respawn immediately
+7. **Crash recovery:** PTY process exits → `send(self(), :pty_exited)` → `force_complete` in-flight task → `{:stop, :pty_exited, state}` → `:transient` restart by Supervisor
 
 ### 3.6 Sub-Agent Economics
 
@@ -294,7 +311,7 @@ Eai.LLM.Direct
         ├── [Tool pre-hooks] Eai.Hub.run → Pipeline.pre_hooks — block/modify args
         ├── Dispatch each tool via Eai.Tool behaviour (execute/4)
         ├── [Tool post-hooks] Pipeline.post_hooks — block/modify results
-        ├── Tool may call PTYPool.exec_async → PTY runs bash → ResultCollector.collect/2
+        ├── Tool may call Eai.PTY.exec_async → Hub.run → PTY.Session.exec → PTY runs bash → ResultCollector.collect/2
         ├── Build tool_result user messages
         ├── Prune stale polls (dedup_stale_task_polls / dedup_stale_subagent_polls)
         └── Recurse: Direct.run(updated_messages, ...) → back to LLM
@@ -315,7 +332,10 @@ Eai.LLM.Direct
 | `Eai.Hub.Pipeline` | Module | Pre/post hook execution with priority ordering |
 | `Eai.Hub.Loader` | Module | Read-only hook introspection (list_files, print_hooks) |
 | `Eai.Hub.Reloader` | Module | Hot-reload hooks from config/hooks/*.exs |
-| `Eai.Sandbox.PTYPool` | GenServer | PTY lifecycle (spawn, exec, reset, interrupt) |
+| `Eai.PTY` | Module | Public PTY API — all calls route through Hub.run/3 for hook interception |
+| `Eai.PTY.Registry` | Registry | pty_session_id → Session PID lookup via Naming.pty_session/1 |
+| `Eai.PTY.Session` | GenServer | Per-session PTY owner (exec, interrupt, reset, clear) |
+| `Eai.PTY.Supervisor` | DynamicSupervisor | Spawns/restarts PTY.Session with :transient strategy |
 | `Eai.ResultCollector` | Module | Sentinel-based output collection, interrupt/timeout flags |
 | `Eai.Message` | Module | Converse-based IR constructors & accessors |
 | `Eai.Adapter.OpenAI` | Module | IR ↔ OpenAI Chat Completions |
@@ -372,11 +392,11 @@ All `:telemetry.execute/3` calls land on a single handler: `Eai.TelemetryHandler
 
 | Event | Where | When |
 |-------|-------|------|
-| `[:eai, :session, :spawn]` | `Eai.Sandbox.PTYPool.get_or_create/2` | New PTY session spawned |
-| `[:eai, :session, :reset]` | `Eai.Sandbox.PTYPool` | Force-reset on session |
+| `[:eai, :session, :spawn]` | `Eai.PTY.Session.spawn_pty/1` | New PTY session spawned |
+| `[:eai, :session, :reset]` | `Eai.PTY.Session` | Force-reset on session |
 | `[:eai, :task, :start]` | `Eai.LLM.Direct` | Task submitted |
-| `[:eai, :task, :chunk]` | `Eai.Sandbox.PTYPool` | PTY chunk received |
-| `[:eai, :task, :complete]` | `Eai.Sandbox.PTYPool` | Task complete |
+| `[:eai, :task, :chunk]` | `Eai.PTY.Session` | PTY chunk received |
+| `[:eai, :task, :complete]` | `Eai.PTY.Session` | Task complete |
 | `[:eai, :task, :timeout]` | `Eai.Task` | Task timed out |
 | `[:eai, :llm, :request, :start \| :stop \| :error]` | `Eai.LLM.Direct` | LLM roundtrip |
 | `[:eai, :tool, :pre \| :post \| :blocked \| :error]` | `Eai.LLM.Direct` | Tool call lifecycle (Direct side) |

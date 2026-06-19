@@ -78,13 +78,13 @@ defmodule Eai do
     #{tool_table()}
 
     ## 高级：PTY 池直接操作
-    alias Eai.Sandbox.PTYPool
-    PTYPool.exec_async(session, cmd, task_id)   → {:ok, task_id} | {:error, :busy}
-    PTYPool.list_sessions()                     → 所有 PTY 会话状态
-    PTYPool.write_raw(session, raw_string)      → :ok
-    PTYPool.interrupt_task(session)             → :ok
-    PTYPool.force_reset(session)                → :ok
-    PTYPool.clear_task(session, task_id)        → :ok
+    alias Eai.PTY
+    Eai.PTY.exec_async(session, cmd, task_id)   → {:ok, task_id} | {:error, :busy}
+    Eai.PTY.list_sessions()                     → 所有 PTY 会话状态
+    Eai.PTY.write_raw(session, raw_string)      → :ok
+    Eai.PTY.interrupt_task(session)             → :ok
+    Eai.PTY.force_reset(session)                → :ok
+    Eai.PTY.clear_task(session, task_id)        → :ok
 
     ## 高级：LLM 直接调用
     Eai.LLM.Direct.run(messages, pty_session_id, opts)
@@ -141,7 +141,8 @@ defmodule Eai do
        "Eai.Tool.ReadMediaFile"},
       {"export_chat_session_context", "%{\"file_path\"=>\"...\"} -> ok",
        "Eai.Tool.ExportChatSessionContext"},
-      {"replace_chat_session_context", "%{\"file_path\"=>\"...\", \"format\"=>\"converse\"} -> ok",
+      {"replace_chat_session_context",
+       "%{\"file_path\"=>\"...\", \"format\"=>\"converse\"} -> ok",
        "Eai.Tool.ReplaceChatSessionContext"},
       {"export_global_context", "%{\"file_path\"=>\"...\"} -> ok",
        "Eai.Tool.ExportGlobalContext"},

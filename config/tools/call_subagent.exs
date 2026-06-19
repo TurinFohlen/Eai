@@ -278,7 +278,8 @@ defmodule Eai.Tool.CallSubagent do
     # directly (not `{:ok, task}` — that's `Task.Supervisor.start_child/2`).
     # Binding the struct to a `_task` underscore makes it explicit we don't
     # need it and silences the "this match will never succeed" warning.
-    _task = Task.Supervisor.async_nolink(Eai.Naming.task_supervisor(), fn ->
+    _task =
+      Task.Supervisor.async_nolink(Eai.Naming.task_supervisor(), fn ->
         result_entry =
           try do
             case Eai.Chat.talk(

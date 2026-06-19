@@ -1,4 +1,5 @@
 defmodule Eai.Hub.Pipeline do
+  require Logger
   @moduledoc """
   Runs pre/post hook pipelines and manages the `:eai_hooks` persistent_term registry.
 
@@ -23,13 +24,12 @@ defmodule Eai.Hub.Pipeline do
   `llm_pre_hooks/4` and `llm_post_hooks/5` follow the same pattern as tool hooks
   but operate on LLM HTTP request boundaries rather than individual tool calls.
   The `tool_name` is always `"LLM_REQUEST"`.
-  """
-
   ## Graph
   <<{Eai.Hub.Pipeline, required_by, Eai.Hub}.
   <<{Eai.Hub.Pipeline, required_by, Eai.PTY.Session}.
+  """
 
-
+  @hooks_key :eai_hooks
 
   # ── Registry ─────────────────────────────────────────────────────────
 

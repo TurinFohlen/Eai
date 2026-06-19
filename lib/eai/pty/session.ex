@@ -50,9 +50,7 @@ defmodule Eai.PTY.Session do
 
   @doc "Start a PTY.Session for `pty_session_id`."
   def start_link(pty_session_id) do
-    GenServer.start_link(__MODULE__, pty_session_id,
-      name: Eai.Naming.pty_session(pty_session_id)
-    )
+    GenServer.start_link(__MODULE__, pty_session_id, name: Eai.Naming.pty_session(pty_session_id))
   end
 
   # ── Public dispatch (called via Hub.run → apply) ──────────────────────
@@ -94,7 +92,7 @@ defmodule Eai.PTY.Session do
   # ── Calls ────────────────────────────────────────────────────────────
 
   @impl true
-  def handle_call({:exec, task_id, cmd}, _from, %{task_id: current} = state)
+  def handle_call({:exec, _task_id, _cmd}, _from, %{task_id: current} = state)
       when is_binary(current) do
     Logger.warning("PTY.Session busy",
       pty_session_id: state.pty_session_id,
@@ -127,8 +125,7 @@ defmodule Eai.PTY.Session do
 
     ExPTY.write(state.pty, line)
 
-    {:reply, {:ok, task_id},
-     %{state | task_id: task_id, task_started_at: now}}
+    {:reply, {:ok, task_id}, %{state | task_id: task_id, task_started_at: now}}
   end
 
   def handle_call(:force_reset, _from, state) do

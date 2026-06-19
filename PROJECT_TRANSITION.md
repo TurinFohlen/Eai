@@ -52,3 +52,11 @@
 <<Task.async + Process.unlink pattern in Eai.Chat replaced with Task.Supervisor.async_nolink(Eai.Naming.task_supervisor(), fn -> ... end) — intent explicit, tasks visible in supervisor tree.
 <<Eai.Application supervision order: PubSub → Cache → Registry → PTY.Supervisor → Task.Supervisor → Chat → (API).
 <<tools execute_script.exs call site updated from PTYPool.exec_async to Eai.PTY.exec_async (Hub-routed); no other tool-layer changes required.
+<<fix/missing-hooks-key-and-ptypool-cleanup restores @hooks_key :eai_hooks in Eai.Hub.Pipeline.
+<<fix/missing-hooks-key-and-ptypool-cleanup adds require Logger to Eai.Hub.Pipeline fixing call_to_missing Logger.warning/2.
+<<fix/missing-hooks-key-and-ptypool-cleanup deletes lib/eai/sandbox/pty_pool.ex entirely (replaced by Eai.PTY + Eai.PTY.Session).
+<<fix/missing-hooks-key-and-ptypool-cleanup updates lib/eai/help.ex PTYPool references → Eai.PTY.
+<<fix/missing-hooks-key-and-ptypool-cleanup prefixes unused vars _task_id _cmd in Eai.PTY.Session busy-guard clause.
+<<fix/missing-hooks-key-and-ptypool-cleanup updates BOOTSTRAP.md v0.1.13→v0.2.0 with PTY subsystem refactor docs.
+<<fix/missing-hooks-key-and-ptypool-cleanup creates TRANSITION.md with global RDF triples.
+<<fix/missing-hooks-key-and-ptypool-cleanup passes mix dialyzer (0 errors) + mix credo --strict (0 issues).
