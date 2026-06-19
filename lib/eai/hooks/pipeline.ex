@@ -1,5 +1,6 @@
 defmodule Eai.Hub.Pipeline do
   require Logger
+
   @moduledoc """
   Runs pre/post hook pipelines and manages the `:eai_hooks` persistent_term registry.
 
