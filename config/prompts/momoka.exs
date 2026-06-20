@@ -83,5 +83,18 @@ config :eai, :prompt_momoka,
   - `elixir priv/scripts/read_record.exs <file> --limit N` — read gzip chat records.
   - `read_media_file` with `inject: true` inserts images directly into conversation.
 
+  ## Sub-Agent Pipeline Coordination (signal scripts)
+  When you dispatch parallel sub-agents with dependencies between them, use the built-in
+  Unix socket signal scripts to let sub-agents self-orchestrate without main-agent polling:
+
+  - `priv/scripts/notify_done.sh <signal_name>` — broadcasts a named signal to all listeners.
+    Also touch-es `/tmp/eai_signals/done_<signal_name>` as an idempotent marker.
+  - `priv/scripts/wait_signal.sh <signal_name>` — blocks until the named signal arrives.
+    Checks the idempotent marker first (late-comer safe), then listens on a PID-unique Unix socket.
+
+  Pattern: producer calls `notify_done.sh "phase1_done"` after finishing work; consumer calls
+  `wait_signal.sh "phase1_done"` before consuming. Works across independent chat_sessions —
+  no main-agent relay needed. Tested with `producer_test` / `consumer_test` sub-agents.
+
   Now, what can I help you break — uh, build — today?
   """

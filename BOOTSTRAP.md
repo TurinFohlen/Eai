@@ -398,13 +398,18 @@ All `:telemetry.execute/3` calls land on a single handler: `Eai.TelemetryHandler
 | `[:eai, :task, :chunk]` | `Eai.PTY.Session` | PTY chunk received |
 | `[:eai, :task, :complete]` | `Eai.PTY.Session` | Task complete |
 | `[:eai, :task, :timeout]` | `Eai.Task` | Task timed out |
-| `[:eai, :llm, :request, :start \| :stop \| :error]` | `Eai.LLM.Direct` | LLM roundtrip |
-| `[:eai, :tool, :pre \| :post \| :blocked \| :error]` | `Eai.LLM.Direct` | Tool call lifecycle (Direct side) |
+| `[:eai, :llm, :request, :start \| :stop]` | `Eai.LLM.Direct` | LLM roundtrip timing (`:stop` carries `status: :ok \| :error`, no failure detail) |
+| `[:eai, :tool, :pre \| :post \| :blocked]` | `Eai.LLM.Direct` | Tool call lifecycle (Direct side); `:blocked` = hook veto, not a failure |
 | `[:eai, :tool, :hub_pre \| :hub_post \| :hub_blocked]` | `Eai.Hub` | Hook dispatch lifecycle (Hub side) |
+| `[:eai, :error, :llm]` | `Eai.LLM.Direct` | LLM request failed. `kind: :http` → `status` (int), `body` (raw term); `kind: :transport` → `reason` (raw term, e.g. `Req`/`Mint` error). Always includes `chat_session_id`, `pty_session_id`, `duration_ms`. Fields are raw terms, never pre-stringified — match directly, no regex needed. |
+| `[:eai, :error, :tool]` | `Eai.LLM.Direct` | Tool execution raised an exception (caught in `execute_single_tool_call/4`). `kind: :exception`, `mod` (the dispatched tool module, resolved dynamically from the same `config/tools/*.exs` registry used for dispatch — works for any user-added tool, nothing hardcoded per tool), `error: %{type:, message:}`, `stacktrace:`. Does **not** fire on hook `:block` (see `:tool, :blocked` above) — only on raised exceptions. |
 | `[:eai, :hook, :auto_snapshot, :saved \| :rolled_back \| :cleared]` | `Eai.Hook.AutoSnapshot` | Snapshot lifecycle |
 | `[:eai, :adapter, :anthropic, :*]` | `Eai.Adapter.Anthropic` | `to_request_body` / `from_response` / `from_messages` |
 | `[:eai, :adapter, :converse, :*]` | `Eai.Adapter.Converse` | (same three) |
 | `[:eai, :adapter, :openai, :*]` | `Eai.Adapter.OpenAI` | (same three) |
+
+**Error namespace:** all failure-detail events (as opposed to pure timing/lifecycle events) live under `[:eai, :error, *]`. A hook/telemetry author who only cares about failures can `:telemetry.attach_many/4` against this one prefix instead of tracking failure-shaped payloads scattered across `:llm, :request, :stop` and `:tool, :post`. Session-lifecycle events (`Eai.Chat`) are intentionally **not** routed through `Eai.Hub` — they have no executable body to intercept (no pre/post/block semantics make sense for "a session was created"), so they remain plain `:telemetry.execute` calls local to `chat.ex`. `Eai.Hub` is the dispatch point only for events with an actual hookable verdict (tool calls, LLM requests); pure-observation events do not need to round-trip through it.
+
 
 ---
 
