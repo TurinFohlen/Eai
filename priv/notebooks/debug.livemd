@@ -1,0 +1,82 @@
+# EAI 调试台
+
+调试 Eai 角色卡、Chat 会话、模型调用的笔记本。所有依赖都在这里声明，不污染核心库。
+
+## Setup
+
+```elixir
+Mix.install([
+  {:eai, path: ".."},
+  {:kino, "~> 0.12"}
+])
+```
+
+## 角色卡索引
+
+```elixir
+cards =
+  Eai.Card.all()
+  |> Enum.map(fn c ->
+    %{
+      name: c[:name],
+      description: c[:description] || "(no description)",
+      model: c[:model],
+      tools: c[:tools] || []
+    }
+  end)
+
+Kino.DataTable.new(cards)
+```
+
+## 可用模型
+
+```elixir
+Eai.Models.names()
+```
+
+## 单次调用（一次性）
+
+```elixir
+Eai.Chat.talk(
+  content: "用一个短句介绍自己",
+  chara_card: :chief_of_staff,
+  mod: :function,
+  timeout: 60_000
+)
+```
+
+## 多会话演示
+
+```elixir
+session_id = "demo_#{System.unique_integer([:positive])}"
+
+result =
+  Eai.Chat.talk(
+    content: "用三句话总结 Elixir 适合做什么",
+    chara_card: :chief_of_staff,
+    mod: :function,
+    chat_session: session_id,
+    timeout: 60_000
+  )
+
+{result, Eai.Chat.get_history(session_id)}
+```
+
+## 活动会话列表
+
+```elixir
+Eai.Chat.list_chat_sessions()
+```
+
+## 关闭演示会话
+
+```elixir
+Eai.Chat.close_chat_session(session_id)
+```
+
+## 热重载角色卡（修改 JSON 后调用）
+
+```elixir
+Eai.Card.reload()
+|> Enum.map(fn c -> {c[:name], c[:description]} end)
+```

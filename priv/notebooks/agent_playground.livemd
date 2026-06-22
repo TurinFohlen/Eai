@@ -1,0 +1,78 @@
+# EAI Agent Playground
+
+挑选角色卡，输入需求，查看 agent 回复。会话状态在 notebook 生命周期内保留。
+
+## Setup
+
+```elixir
+Mix.install([
+  {:eai, path: ".."},
+  {:kino, "~> 0.12"}
+])
+```
+
+## 选择角色卡
+
+```elixir
+input = Kino.Input.select(
+  "角色卡",
+  Enum.map(Eai.Card.names(), &{Atom.to_string(&1), &1})
+)
+
+session_input = Kino.Input.text("会话名", default: "playground_#{System.unique_integer([:positive])}")
+
+form = Kino.Control.form([input, session_input], submit: "运行")
+
+frame = Kino.Frame.new()
+
+form
+|> Kino.Control.stream()
+|> Kino.Control.tag_frame(frame)
+|> Kino.listen(fn event ->
+  %{data: %{card: card, session: session}} = event
+  content = IO.gets("需求> ") |> to_string() |> String.trim()
+
+  frame
+  |> Kino.Frame.render(
+    Kino.Markdown.new("**运行中**，角色卡=`#{card}`，会话=`#{session}`")
+  )
+
+  result =
+    Eai.Chat.talk(
+      content: content,
+      chara_card: card,
+      chat_session: session,
+      mod: :function,
+      timeout: 120_000
+    )
+
+  rendered =
+    case result do
+      {:ok, reply} ->
+        Kino.Markdown.new("**回复**\n\n```\n#{reply}\n```")
+
+      {:error, reason} ->
+        Kino.Markdown.new("**失败**：`#{inspect(reason)}`")
+    end
+
+  Kino.Frame.render(frame, rendered)
+end)
+
+Kino.Layout.column([form, frame])
+```
+
+## 查看当前会话历史
+
+```elixir
+# 把下面的 session_id 改成上面 form 里你填的会话名
+session_id = "playground_default"
+
+Eai.Chat.get_history(session_id)
+|> Enum.map(fn msg ->
+  %{
+    role: msg.role,
+    content: String.slice(to_string(msg.content), 0, 200)
+  }
+end)
+|> Kino.DataTable.new()
+```
