@@ -8,7 +8,18 @@
     "extensions": {
       "eai": {
         "tools": [
-          "execute_script"
+          "call_subagent",
+          "get_subagent_result",
+          "list_chara_cards",
+          "list_chat_sessions",
+          "export_chat_session_context",
+          "replace_chat_session_context",
+          "export_global_context",
+          "replace_global_context",
+          "set_config",
+          "hub_reload",
+          "get_local_time",
+          "read_media_file"
         ]
       }
     }

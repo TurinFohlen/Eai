@@ -9,7 +9,15 @@
     "extensions": {
       "eai": {
         "model": "gpt4o",
-        "tools": ["read_media_file", "execute_script"]
+        "tools": [
+          "execute_script",
+          "get_task_result",
+          "write_to_session",
+          "force_complete_task",
+          "list_pty_sessions",
+          "reset_session",
+          "read_media_file"
+        ]
       }
     }
   }

@@ -16,8 +16,7 @@ docs/
 
 # Personal / private
 chat_records/
-config/models/glm_5_1.exs
-config/models/xingchen_glm_5_1.exs
+config/models/xingchen*
 
 # Mix
 *.ez

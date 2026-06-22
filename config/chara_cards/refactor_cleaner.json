@@ -9,7 +9,11 @@
       "eai": {
         "tools": [
           "execute_script",
-          "call_subagent"
+          "get_task_result",
+          "write_to_session",
+          "force_complete_task",
+          "list_pty_sessions",
+          "reset_session"
         ]
       }
     }
