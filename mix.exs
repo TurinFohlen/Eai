@@ -88,7 +88,7 @@ defmodule Eai.MixProject do
         "config/chara_cards/*.json"
       ],
       licenses: ["Apache-2.0"],
-      links: %{"GitHub" => "https://github.com/TurinFohlen/eai"}
+      links: %{"GitHub" => "https://github.com/TurinFohlen/Eai"}
     ]
   end
 end
