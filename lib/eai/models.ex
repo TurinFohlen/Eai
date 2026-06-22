@@ -155,8 +155,8 @@ defmodule Eai.Models do
         nil
 
       env ->
-        System.get_env(env) ||
-          raise "environment variable #{env} is not set (required by model #{entry[:name]})"
+        System.get_env(env)
+        # ||raise "environment variable #{env} is not set (required by model #{entry[:name]})"
     end
   end
 
@@ -213,13 +213,6 @@ defmodule Eai.Models do
     # back to `nil` (the 2-arity `Map.get` default when the key is
     # absent), and `do_run/5`'s guard short-circuits to `extra_headers: []`.
     |> maybe_put(:anthropic_beta, entry[:anthropic_beta])
-    # Step 10: Anthropic's `thinking` block `budget_tokens` is now a
-    # per-model config field. nil = pass-through; the Anthropic adapter
-    # emits `budget_tokens: nil` and the API rejects. No Eai-side
-    # fallback (per user decision: "我们没必要为api那一边的兼容性问题,
-    # 在主代码的这种预设理想情况下改什么"). Consumed only by the
-    # `:anthropic` provider path; ignored by OpenAI / Converse (those
-    # providers don't have a thinking block).
     |> maybe_put(:reasoning_budget_tokens, entry[:reasoning_budget_tokens])
   end
 
