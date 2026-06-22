@@ -86,7 +86,7 @@ defmodule Eai.Tool.ReadMediaFile do
       max_dim = to_string(args["max_dimension"] || 1024)
       frame_time = to_string(args["video_frame_time"] || 0)
       media_type = args["media_type"] || "auto"
-      script = Path.join(:code.priv_dir(:eai), "scripts/media_reader.py")
+      script = Path.join(:code.priv_dir(:eai), "scripts/deps/media_reader.py")
 
       case System.cmd(
              "python3",

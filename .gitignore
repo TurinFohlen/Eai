@@ -1,6 +1,6 @@
 # Elixir build artifacts
 _build/
-deps/
+/deps/
 doc/
 docs/
 .hexignore
