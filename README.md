@@ -36,10 +36,10 @@ Eai.Chat.talk(chat_session: "work", content: "Setup CI")   # isolated session
 
 Models & Prompts
 
-Defined in config/models.exs and config/prompts.exs. List what's available:
+Defined in `config/models/*.exs` and `config/prompts/*.exs`. List what's available:
 
 ```elixir
-Eai.Models.names()   # => [:deepseek, :gpt4o, :claude_sonnet, …]
+Eai.Models.names()   # => [:deepseek, :gpt4o, :claude_sonnet, ...]
 Eai.Prompts.list()   # => :momoka, :coder, :analyst
 ```
 
@@ -92,7 +92,6 @@ Supports stdio, HTTP, SSE transports. Built-in OAuth, daemon keep-alive, record/
 ```bash
 npm install -g agent-browser && agent-browser install
 
-# Navigate and snapshot
 agent-browser open https://example.com
 agent-browser snapshot -i          # interactive elements only
 
@@ -111,8 +110,14 @@ Agents write RDF‑style triples `<<{subject, predicate, object}.` into files (e
 Query them with:
 
 ```bash
-python priv/scripts/dispatch.py <file_or_dir> path A B
-python priv/scripts/dispatch.py <file_or_dir> query A B 5
+python priv/scripts/tools/dispatch.py <file_or_dir> path A B
+python priv/scripts/tools/dispatch.py <file_or_dir> query A B 5
+```
+
+Discover all auxiliary tools:
+
+```bash
+bash priv/scripts/tools/bin/scan_tools.sh
 ```
 
 ## Configuration

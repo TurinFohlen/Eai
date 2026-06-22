@@ -1,3 +1,4 @@
+# SPDX-FileDescription: path-dispatch Python package — triples parsing, graph building, shortest paths
 """
 path-dispatch: Discrete Hamiltonian task dispatcher with hypergraph support.
 

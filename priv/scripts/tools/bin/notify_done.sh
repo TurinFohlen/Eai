@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-FileDescription: Broadcast task-completion signal to all waiting listeners via Unix sockets
 # notify_done.sh - 发送任务完成信号广播
 # 用法: ./notify_done.sh "信号名称"
 

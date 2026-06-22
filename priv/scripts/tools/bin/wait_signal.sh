@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-FileDescription: Block until a named signal is received — sub-agent pipeline synchronization
 # wait_signal.sh - 阻塞监听信号，等待前置任务完成
 # 用法: ./wait_signal.sh "信号名称"
 

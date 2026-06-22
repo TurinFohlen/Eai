@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-FileDescription: Extract <<{A, rel, B}. triples from Elixir source and feed to dispatch.py
 # extract_triples.sh
 # Extract <<{A, rel, B}. triples from Elixir source and feed to dispatch.py.
 #

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-FileDescription: Hamiltonian path dispatcher with sparse matrices — query/path/matrix/deps on triples
 """
 dispatch.py — Discrete Hamiltonian Path Dispatcher with Sparse Matrices
 

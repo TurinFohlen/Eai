@@ -1,4 +1,5 @@
 #!/usr/bin/env elixir
+# SPDX-FileDescription: IR JSON ↔ Converse .gz bidirectional codec — decode transcripts, encode contexts
 
 # record_coder.exs — IR JSON ↔ Converse .gz 双向编解码器
 #
